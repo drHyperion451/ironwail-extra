@@ -3597,8 +3597,8 @@ void M_AdjustSliders (int dir)
 		else if (f > 1)	f = 1;
 		Cvar_SetValue ("volume", f);
 		break;
-	case OPT_SNDQUAL:	// Change sample rate from 11.5kHz to 44.1kHz
-		Cvar_Set ("sndspeed", sndspeed.value ? "11025" : "44100");
+	case OPT_SNDQUAL:	// Change sample rate from 11025 Hz to 44100 kHz
+		Cvar_SetValue ("sndspeed", (sndspeed.value == 11025) ? 44100 : 11025);
 		break;
 
 	case OPT_HUDSTYLE:	// hud style
