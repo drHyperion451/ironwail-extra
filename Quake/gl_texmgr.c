@@ -464,6 +464,8 @@ static void TexMgr_Imagedump_f (void)
 
 		GL_Bind (GL_TEXTURE0, glt);
 		buffer = (byte *) malloc(glt->width * glt->height * glt->depth * channels);
+		if (!buffer)
+			Sys_Error ("TexMgr_Imagedump_f: out of memory (%dx%dx%d %d bpp)", glt->width, glt->height, glt->depth, channels * 8);
 
 		if (glt->flags & TEXPREF_CUBEMAP)
 		{

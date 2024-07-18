@@ -846,6 +846,8 @@ qboolean Con_CopySelectionToClipboard (void)
 	// Convert to UTF-8
 	maxsize = UTF8_FromQuake (NULL, 0, qtext);
 	utf8 = (char *) malloc (maxsize);
+	if (!utf8)
+		Sys_Error ("Con_CopySelectionToClipboard: out of memory on %" SDL_PRIu64 " bytes", (uint64_t)maxsize);
 	UTF8_FromQuake (utf8, maxsize, qtext);
 
 	// Copy the UTF-8 text to clipboard
@@ -1422,7 +1424,7 @@ void Con_LinkPrintf (const char *addr, const char *fmt, ...)
 	len = strlen (addr);
 	link = (conlink_t *) malloc (sizeof (conlink_t) + len + 1);
 	if (!link)
-		Sys_Error ("Con_LinkPrintf: out of memory on %" SDL_PRIu64 "u bytes", (uint64_t)(sizeof (conlink_t) + len + 1));
+		Sys_Error ("Con_LinkPrintf: out of memory on %" SDL_PRIu64 " bytes", (uint64_t)(sizeof (conlink_t) + len + 1));
 	
 	memcpy (link + 1, addr, len + 1);
 	link->path			= (const char *)(link + 1);

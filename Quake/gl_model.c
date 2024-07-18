@@ -859,7 +859,7 @@ static void Mod_LoadLighting (lump_t *l)
 					return;
 				}
 				Hunk_FreeToLowMark(mark);
-				Con_Printf("Outdated .lit file (%s should be %u bytes, not %lli)\n", litfilename, 8+l->filelen*3, com_filesize);
+				Con_Printf("Outdated .lit file (%s should be %u bytes, not %" SDL_PRIs64 "\n", litfilename, 8+l->filelen*3, com_filesize);
 			}
 			else
 			{
@@ -1783,23 +1783,24 @@ Mod_FindUsedTextures
 */
 static void Mod_FindUsedTextures (qmodel_t *mod)
 {
-	msurface_t *s;
-	int i, count, bit;
-	int ofs[TEXTYPE_COUNT];
-	int mark = Hunk_HighMark ();
-	byte *inuse = (byte *) Hunk_HighAllocName ((mod->numtextures + 7) >> 3, "used textures");
+	msurface_t	*s;
+	int			i, count;
+	int			ofs[TEXTYPE_COUNT];
+	uint32_t	*inuse;
+
+	inuse = (uint32_t *) calloc (BITARRAY_DWORDS (mod->numtextures), sizeof (uint32_t));
+	if (!inuse)
+		Sys_Error ("Mod_FindUsedTextures: out of memory (%d bits)", mod->numtextures);
 
 	memset (ofs, 0, sizeof(ofs));
 	for (i = 0, s = mod->surfaces + mod->firstmodelsurface; i < mod->nummodelsurfaces; i++, s++)
 	{
 		texture_t *t = mod->textures[s->texinfo->texnum];
-		byte *val = &inuse[s->texinfo->texnum >> 3];
 		if (!t)
 			continue;
-		bit = 1 << (s->texinfo->texnum & 7);
-		if (!(*val & bit))
+		if (!GetBit (inuse, s->texinfo->texnum))
 		{
-			*val |= bit;
+			SetBit (inuse, s->texinfo->texnum);
 			ofs[t->type]++;
 		}
 	}
@@ -1817,11 +1818,11 @@ static void Mod_FindUsedTextures (qmodel_t *mod)
 	for (i = 0; i < mod->numtextures; i++)
 	{
 		texture_t *t = mod->textures[i];
-		if (inuse[i >> 3] & (1 << (i & 7)))
+		if (GetBit (inuse, i))
 			mod->usedtextures[ofs[t->type]++] = i;
 	}
 
-	Hunk_FreeToHighMark (mark);
+	free (inuse);
 
 	//Con_Printf("%s: %d/%d textures\n", mod->name, count, mod->numtextures);
 }
@@ -2470,6 +2471,48 @@ visdone:
 
 /*
 =================
+Mod_SanitizeMapDescription
+
+Cleans up map descriptions:
+- removes colors
+- replaces newlines with spaces
+- replaces consecutive spaces with single one
+- removes leading/trailing spaces
+
+Returns dst string length (excluding NUL terminator)
+=================
+*/
+size_t Mod_SanitizeMapDescription (char *dst, size_t dstsize, const char *src)
+{
+	int srcpos, dstpos;
+
+	if (!dstsize)
+		return 0;
+
+	for (srcpos = dstpos = 0; src[srcpos] && (size_t)dstpos + 1 < dstsize; srcpos++)
+	{
+		char c = src[srcpos] & 0x7f; // remove color
+		if (c == '\n' || c == '\r') // replace newlines with spaces
+			c = ' ';
+		else if (c == '\\' && src[srcpos + 1] == 'n') // replace '\\' followed by 'n' with space
+		{
+			c = ' ';
+			srcpos++;
+		}
+		// remove leading spaces, replace consecutive spaces with single one
+		if (c != ' ' || (dstpos > 0 && dst[dstpos - 1] != c))
+			dst[dstpos++] = c;
+	}
+	// remove trailing space, if any
+	if (dstpos > 0 && dst[dstpos - 1] == ' ')
+		--dstpos;
+
+	dst[dstpos] = '\0';
+	return dstpos;
+}
+
+/*
+=================
 Mod_LoadMapDescription
 
 Parses the entity lump in the given map to find its worldspawn message
@@ -2485,7 +2528,7 @@ qboolean Mod_LoadMapDescription (char *desc, size_t maxchars, const char *map)
 	FILE		*f;
 	lump_t		*entlump;
 	dheader_t	header;
-	int			i, j, k, filesize;
+	int			i, filesize;
 	qboolean	ret = false;
 
 	if (!maxchars)
@@ -2578,25 +2621,7 @@ qboolean Mod_LoadMapDescription (char *desc, size_t maxchars, const char *map)
 
 			if (is_message)
 			{
-				// copy map title and clean it up a bit
-				for (j = k = 0; com_token[j] && (size_t)k + 1 < maxchars; j++)
-				{
-					char c = com_token[j] & 0x7f;
-					if (c == '\n' || c == '\r') // replace newlines with spaces
-						c = ' ';
-					else if (c == '\\' && com_token[j + 1] == 'n') // replace '\\' followed by 'n' with space
-					{
-						c = ' ';
-						j++;
-					}
-					// remove leading spaces, replace consecutive spaces with single one
-					if (c != ' ' || (k > 0 && desc[k - 1] != c))
-						desc[k++] = c;
-				}
-				// remove trailing space, if any
-				if (k > 0 && desc[k - 1] == ' ')
-					--k;
-				desc[k++] = '\0';
+				Mod_SanitizeMapDescription (desc, maxchars, com_token);
 				if (ret)
 					return true;
 			}
@@ -3718,6 +3743,8 @@ static void MD5_ComputeNormals(iqmvert_t *vert, size_t numverts, unsigned short 
 	hashmap = (int *) calloc (hashsize, sizeof (*hashmap));
 	weld = (unsigned short *) malloc (numverts * sizeof (*weld));
 	normals = (vec3_t *) calloc (numverts, sizeof (vec3_t));
+	if (!hashmap || !weld || !normals)
+		Sys_Error ("MD5_ComputeNormals: out of memory (%u verts/%u tris)", (unsigned int)numverts, (unsigned int)(numindexes/3));
 
 	for (v = 0; v < numverts; v++)
 	{
@@ -3870,6 +3897,8 @@ static void MD5Anim_Load(md5animctx_t *ctx, boneinfo_t *bones, size_t numbones)
 
 	ctx->posedata = outposes = (bonepose_t *) Hunk_Alloc(sizeof(*outposes)*ctx->numjoints*ctx->numposes);
 	frameposes = (bonepose_t *) malloc (sizeof (*frameposes) * ctx->numjoints);
+	if (!frameposes)
+		Sys_Error ("MD5Anim_Load: out of memory (%u joints)", (unsigned int)ctx->numjoints);
 
 
 	MD5EXPECT("hierarchy");

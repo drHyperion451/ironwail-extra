@@ -371,7 +371,7 @@ qpic_t	*Draw_TryCachePic (const char *path, unsigned int texflags)
 //
 // load the pic from disk
 //
-	dat = (qpic_t *)COM_LoadTempFile (path, NULL);
+	dat = (qpic_t *)COM_LoadMallocFile (path, NULL);
 	if (!dat)
 		return NULL;
 	SwapPic (dat);
@@ -404,6 +404,7 @@ qpic_t	*Draw_TryCachePic (const char *path, unsigned int texflags)
 		gl.th = (float)dat->height/(float)TexMgr_PadConditional(dat->height); //johnfitz
 	}
 
+	free (dat);
 	memcpy (pic->pic.data, &gl, sizeof(glpic_t));
 
 	return &pic->pic;

@@ -165,12 +165,12 @@ void Host_EndGame (const char *message, ...)
 
 /*
 ================
-Host_Error
+Host_ReportError
 
 This shuts down both the client and server
 ================
 */
-void Host_Error (const char *error, ...)
+void Host_ReportError (const char *error, ...)
 {
 	va_list		argptr;
 	char		string[1024];
@@ -1015,15 +1015,18 @@ static void UpdateWindowTitle (void)
 
 	if (current.map[0])
 	{
-		char levelname[4 * sizeof (cl.levelname)];
+		char cleanname[sizeof (cl.levelname)];
+		char utf8name[4 * sizeof (cl.levelname)];
 		char title[1024];
 
-		UTF8_FromQuake (levelname, sizeof (levelname), cl.levelname);
+		Mod_SanitizeMapDescription (cleanname, sizeof (cleanname), cl.levelname);
+
+		UTF8_FromQuake (utf8name, sizeof (utf8name), cleanname);
 		q_snprintf (title, sizeof (title),
-			levelname[0] ?
+			utf8name[0] ?
 				"%s (%s)  |  skill %d  |  %d/%d kills  |  %d/%d secrets  -  " WINDOW_TITLE_STRING :
 				"%s%s  |  skill %d  |  %d/%d kills  |  %d/%d secrets  -  " WINDOW_TITLE_STRING,
-			levelname, current.map,
+			utf8name, current.map,
 			current.stats.skill,
 			current.stats.monsters, current.stats.total_monsters,
 			current.stats.secrets, current.stats.total_secrets

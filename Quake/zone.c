@@ -45,7 +45,6 @@ typedef struct
 } memzone_t;
 
 void Cache_FreeLow (int new_low_hunk);
-void Cache_FreeHigh (int new_high_hunk);
 
 
 /*
@@ -294,33 +293,55 @@ typedef struct
 	char	name[HUNKNAME_LEN];
 } hunk_t;
 
-byte	*hunk_base;
-int		hunk_size;
+typedef struct hunkseg_s
+{
+	struct hunkseg_s	*next;
+	int					base;
+	int					size;
+	int					used;
+} hunkseg_t;
 
-int		hunk_low_used;
-int		hunk_high_used;
+#define SEG_MEM(seg)	((byte *) ((seg) + 1))
 
-qboolean	hunk_tempactive;
-int		hunk_tempmark;
+static hunkseg_t		*hunk_firstseg;
+static hunkseg_t		*hunk_lastseg;
+
+static int				hunk_low_used;
+
+
+/*
+===================
+Hunk_Size
+===================
+*/
+static int Hunk_Size (void)
+{
+	return hunk_lastseg->base + hunk_lastseg->size;
+}
 
 /*
 ==============
 Hunk_Check
 
-Run consistancy and sentinel trahing checks
+Run consistency and sentinel trashing checks
 ==============
 */
 void Hunk_Check (void)
 {
-	hunk_t	*h;
+	hunkseg_t	*seg;
+	int			ofs;
 
-	for (h = (hunk_t *)hunk_base ; (byte *)h != hunk_base + hunk_low_used ; )
+	for (seg = hunk_firstseg; seg && seg->base < hunk_low_used; seg = seg->next)
 	{
-		if (h->sentinel != HUNK_SENTINEL)
-			Sys_Error ("Hunk_Check: trashed sentinel");
-		if (h->size < (int) sizeof(hunk_t) || h->size + (byte *)h - hunk_base > hunk_size)
-			Sys_Error ("Hunk_Check: bad size");
-		h = (hunk_t *)((byte *)h+h->size);
+		for (ofs = 0; ofs < seg->used; )
+		{
+			hunk_t *h = (hunk_t *) (SEG_MEM (seg) + ofs);
+			if (h->sentinel != HUNK_SENTINEL)
+				Sys_Error ("Hunk_Check: trashed sentinel");
+			if (h->size < (int) sizeof(hunk_t) || h->size + ofs > seg->size)
+				Sys_Error ("Hunk_Check: bad size");
+			ofs += h->size;
+		}
 	}
 }
 
@@ -334,80 +355,103 @@ Otherwise, allocations with the same name will be totaled up before printing.
 */
 void Hunk_Print (qboolean all)
 {
-	hunk_t	*h, *next, *endlow, *starthigh, *endhigh;
-	int		count, sum;
-	int		totalblocks;
-	char	name[HUNKNAME_LEN];
+	hunkseg_t	*seg;
+	hunk_t		*h, *next;
+	int			count, sum, numseg;
+	int			totalblocks;
 
 	count = 0;
 	sum = 0;
 	totalblocks = 0;
 
-	h = (hunk_t *)hunk_base;
-	endlow = (hunk_t *)(hunk_base + hunk_low_used);
-	starthigh = (hunk_t *)(hunk_base + hunk_size - hunk_high_used);
-	endhigh = (hunk_t *)(hunk_base + hunk_size);
+	Con_SafePrintf ("\n");
 
-	Con_Printf ("          :%8i total hunk size\n", hunk_size);
-	Con_Printf ("-------------------------\n");
-
-	while (1)
+	// print segments if more than 1
+	if (hunk_firstseg->next)
 	{
-	//
-	// skip to the high hunk if done with low hunk
-	//
-		if ( h == endlow )
-		{
-			Con_Printf ("-------------------------\n");
-			Con_Printf ("          :%8i REMAINING\n", hunk_size - hunk_low_used - hunk_high_used);
-			Con_Printf ("-------------------------\n");
-			h = starthigh;
-		}
-
-	//
-	// if totally done, break
-	//
-		if ( h == endhigh )
-			break;
-
-	//
-	// run consistancy checks
-	//
-		if (h->sentinel != HUNK_SENTINEL)
-			Sys_Error ("Hunk_Check: trashed sentinel");
-		if (h->size < (int) sizeof(hunk_t) || h->size + (byte *)h - hunk_base > hunk_size)
-			Sys_Error ("Hunk_Check: bad size");
-
-		next = (hunk_t *)((byte *)h+h->size);
-		count++;
-		totalblocks++;
-		sum += h->size;
-
-	//
-	// print the single block
-	//
-		memcpy (name, h->name, HUNKNAME_LEN);
-		if (all)
-			Con_Printf ("%8p :%8i %8s\n",h, h->size, name);
-
-	//
-	// print the total
-	//
-		if (next == endlow || next == endhigh ||
-		    strncmp (h->name, next->name, HUNKNAME_LEN - 1))
-		{
-			if (!all)
-				Con_Printf ("          :%8i %8s (TOTAL)\n",sum, name);
-			count = 0;
-			sum = 0;
-		}
-
-		h = next;
+		Con_SafePrintf ("             Segments\n");
+		Con_SafePrintf ("---------------------------------\n");
+		Con_SafePrintf ("id :     offset :       size\n");
+		Con_SafePrintf ("---------------------------------\n");
+		for (numseg = 0, seg = hunk_firstseg; seg; seg = seg->next, numseg++)
+			Con_SafePrintf ("%2i : %10i : %10i\n", numseg, seg->base, seg->size);
+		Con_SafePrintf ("---------------------------------\n");
+		Con_SafePrintf ("\n");
+		Con_SafePrintf ("           Allocations\n");
+		Con_SafePrintf ("---------------------------------\n");
 	}
 
-	Con_Printf ("-------------------------\n");
-	Con_Printf ("%8i total blocks\n", totalblocks);
+	if (all)
+		Con_SafePrintf ("    offset :       size : name\n");
+	else
+		Con_SafePrintf ("allocs :       size : name\n");
+	Con_SafePrintf ("---------------------------------\n");
 
+	for (numseg = 0, seg = hunk_firstseg; seg; seg = seg->next, numseg++)
+	{
+		if (seg->base < hunk_low_used)
+		{
+			int ofs;
+
+			for (ofs = 0; ofs < seg->used; )
+			{
+				h = (hunk_t *) (SEG_MEM (seg) + ofs);
+
+				// if this is the last block in the segment, then the next block is either
+				// the first block of the next segment, or NULL if this is the last segment
+				if (ofs + h->size == seg->used)
+					next = seg->next ? (hunk_t *) SEG_MEM (seg->next) : NULL;
+				else // at least 1 more block in the current segment
+					next = (hunk_t *) ((byte *)h + h->size);
+
+				//
+				// run consistency checks
+				//
+				if (h->sentinel != HUNK_SENTINEL)
+					Sys_Error ("Hunk_Check: trashed sentinel");
+				if (h->size < (int) sizeof(hunk_t) || h->size + ofs > seg->size)
+					Sys_Error ("Hunk_Check: bad size");
+
+				count++;
+				totalblocks++;
+				sum += h->size;
+
+				//
+				// print the single block
+				//
+				if (all)
+					Con_SafePrintf ("%10i : %10i : %s\n", seg->base + ofs, h->size, h->name);
+
+				//
+				// print the total
+				//
+				if (!next || strncmp (h->name, next->name, HUNKNAME_LEN - 1) != 0)
+				{
+					if (!all)
+						Con_SafePrintf ("%6i : %10i : %s\n", count, sum, h->name);
+					count = 0;
+					sum = 0;
+				}
+
+				ofs += h->size;
+			}
+		}
+	}
+
+	Con_SafePrintf ("---------------------------------\n");
+
+	if (all)
+	{
+		Con_SafePrintf ("%10s   %10i   USED (%d alloc%s)\n", "", hunk_low_used, PLURAL (totalblocks));
+		Con_SafePrintf ("%10s   %10i   REMAINING\n", "", Hunk_Size () - hunk_low_used);
+		Con_SafePrintf ("%10s   %10i   TOTAL\n", "", Hunk_Size ());
+	}
+	else
+	{
+		Con_SafePrintf ("%6i : %10i : USED\n", totalblocks, hunk_low_used);
+		Con_SafePrintf ("%6s : %10i : REMAINING\n", "", Hunk_Size () - hunk_low_used);
+		Con_SafePrintf ("%6s : %10i : TOTAL\n", "", Hunk_Size ());
+	}
 }
 
 /*
@@ -422,27 +466,111 @@ void Hunk_Print_f (void)
 
 /*
 ===================
+Hunk_SegForOfs
+===================
+*/
+static hunkseg_t *Hunk_SegForOfs (int ofs)
+{
+	hunkseg_t *seg;
+
+	for (seg = hunk_firstseg; seg; seg = seg->next)
+		if (seg->base <= ofs && ofs < seg->base + seg->size)
+			return seg;
+
+	Sys_Error ("Hunk_SegForOfs: bad offset %d (max: %d)", ofs, Hunk_Size ());
+
+	return NULL;
+}
+
+/*
+===================
+Hunk_SegForPtr
+===================
+*/
+static hunkseg_t *Hunk_SegForPtr (const void *ptr)
+{
+	hunkseg_t *seg;
+
+	for (seg = hunk_firstseg; seg; seg = seg->next)
+	{
+		const byte *begin = SEG_MEM (seg);
+		const byte *end = begin + seg->size;
+		if (PTR_IN_RANGE (ptr, begin, end))
+			return seg;
+	}
+
+	Sys_Error ("Hunk_SegForPtr: bad pointer");
+
+	return NULL;
+}
+
+
+/*
+===================
 Hunk_AllocName
 ===================
 */
 void *Hunk_AllocName (int size, const char *name)
 {
-	hunk_t	*h;
+	hunkseg_t	*seg;
+	hunk_t		*h;
 
 #ifdef PARANOID
 	Hunk_Check ();
 #endif
+
+	if (size == 0)
+		return NULL;
 
 	if (size < 0)
 		Sys_Error ("Hunk_Alloc: bad size: %i", size);
 
 	size = sizeof(hunk_t) + ((size+15)&~15);
 
-	if (hunk_size - hunk_low_used - hunk_high_used < size)
-		Sys_Error ("Hunk_Alloc: failed on %i bytes",size);
+	seg = Hunk_SegForOfs (hunk_low_used);
 
-	h = (hunk_t *)(hunk_base + hunk_low_used);
+	// skip segments that can't handle this request (adjusting hunk_low_used)
+	while (seg && (hunk_low_used - seg->base) + size > seg->size)
+	{
+		seg = seg->next;
+		if (!seg)
+			break;
+		hunk_low_used = seg->base;
+	}
+
+	// add new segment if we've reached the end
+	if (!seg)
+	{
+		int newbase, newsize;
+
+		Cache_Flush ();
+
+		newbase = hunk_lastseg->base + hunk_lastseg->size;
+		newsize = hunk_lastseg->size * 2;
+		newsize = q_max (newsize, size);
+
+		Sys_Printf ("Allocating new hunk segment: %.2lf MiB\n", newsize / 1048576.0);
+
+		seg = (hunkseg_t *) malloc (sizeof (hunkseg_t) + newsize);
+		if (!seg)
+		{
+			Sys_Error ("Hunk_Alloc: failed on %i bytes", size);
+			return NULL;
+		}
+
+		seg->base = newbase;
+		seg->size = newsize;
+		seg->next = NULL;
+		seg->used = 0;
+
+		hunk_lastseg->next = seg;
+		hunk_lastseg = seg;
+		hunk_low_used = hunk_lastseg->base;
+	}
+
+	h = (hunk_t *) (SEG_MEM (seg) + hunk_low_used - seg->base);
 	hunk_low_used += size;
+	seg->used = hunk_low_used - seg->base;
 
 	Cache_FreeLow (hunk_low_used);
 
@@ -472,107 +600,14 @@ int	Hunk_LowMark (void)
 
 void Hunk_FreeToLowMark (int mark)
 {
+	hunkseg_t *seg;
+
 	if (mark < 0 || mark > hunk_low_used)
 		Sys_Error ("Hunk_FreeToLowMark: bad mark %i", mark);
-	memset (hunk_base + mark, 0, hunk_low_used - mark);
+
 	hunk_low_used = mark;
-}
-
-int	Hunk_HighMark (void)
-{
-	if (hunk_tempactive)
-	{
-		hunk_tempactive = false;
-		Hunk_FreeToHighMark (hunk_tempmark);
-	}
-
-	return hunk_high_used;
-}
-
-void Hunk_FreeToHighMark (int mark)
-{
-	if (hunk_tempactive)
-	{
-		hunk_tempactive = false;
-		Hunk_FreeToHighMark (hunk_tempmark);
-	}
-	if (mark < 0 || mark > hunk_high_used)
-		Sys_Error ("Hunk_FreeToHighMark: bad mark %i", mark);
-	memset (hunk_base + hunk_size - hunk_high_used, 0, hunk_high_used - mark);
-	hunk_high_used = mark;
-}
-
-
-/*
-===================
-Hunk_HighAllocName
-===================
-*/
-void *Hunk_HighAllocName (int size, const char *name)
-{
-	hunk_t	*h;
-
-	if (size < 0)
-		Sys_Error ("Hunk_HighAllocName: bad size: %i", size);
-
-	if (hunk_tempactive)
-	{
-		Hunk_FreeToHighMark (hunk_tempmark);
-		hunk_tempactive = false;
-	}
-
-#ifdef PARANOID
-	Hunk_Check ();
-#endif
-
-	size = sizeof(hunk_t) + ((size+15)&~15);
-
-	if (hunk_size - hunk_low_used - hunk_high_used < size)
-	{
-		Con_Printf ("Hunk_HighAlloc: failed on %i bytes\n",size);
-		return NULL;
-	}
-
-	hunk_high_used += size;
-	Cache_FreeHigh (hunk_high_used);
-
-	h = (hunk_t *)(hunk_base + hunk_size - hunk_high_used);
-
-	memset (h, 0, size);
-	h->size = size;
-	h->sentinel = HUNK_SENTINEL;
-	q_strlcpy (h->name, name, HUNKNAME_LEN);
-
-	return (void *)(h+1);
-}
-
-
-/*
-=================
-Hunk_TempAlloc
-
-Return space from the top of the hunk
-=================
-*/
-void *Hunk_TempAlloc (int size)
-{
-	void	*buf;
-
-	size = (size+15)&~15;
-
-	if (hunk_tempactive)
-	{
-		Hunk_FreeToHighMark (hunk_tempmark);
-		hunk_tempactive = false;
-	}
-
-	hunk_tempmark = Hunk_HighMark ();
-
-	buf = Hunk_HighAllocName (size, "temp");
-
-	hunk_tempactive = true;
-
-	return buf;
+	for (seg = Hunk_SegForOfs (hunk_low_used); seg; seg = seg->next)
+		seg->used = q_max (0, hunk_low_used - seg->base);
 }
 
 char *Hunk_Strdup (const char *s, const char *name)
@@ -644,44 +679,22 @@ Throw things out until the hunk can be expanded to the given point
 void Cache_FreeLow (int new_low_hunk)
 {
 	cache_system_t	*c;
+	hunkseg_t		*seg;
+	int				ofs;
+
+	// can only allocate space in the last segment
+	new_low_hunk = q_max (new_low_hunk, hunk_lastseg->base);
 
 	while (1)
 	{
 		c = cache_head.next;
 		if (c == &cache_head)
 			return;		// nothing in cache at all
-		if ((byte *)c >= hunk_base + new_low_hunk)
+		seg = Hunk_SegForPtr (c);
+		ofs = (byte *) (c) - SEG_MEM (seg);
+		if (ofs + seg->base >= new_low_hunk)
 			return;		// there is space to grow the hunk
 		Cache_Move ( c );	// reclaim the space
-	}
-}
-
-/*
-============
-Cache_FreeHigh
-
-Throw things out until the hunk can be expanded to the given point
-============
-*/
-void Cache_FreeHigh (int new_high_hunk)
-{
-	cache_system_t	*c, *prev;
-
-	prev = NULL;
-	while (1)
-	{
-		c = cache_head.prev;
-		if (c == &cache_head)
-			return;		// nothing in cache at all
-		if ( (byte *)c + c->size <= hunk_base + hunk_size - new_high_hunk)
-			return;		// there is space to grow the hunk
-		if (c == prev)
-			Cache_Free (c->user, true);	// didn't move out of the way //johnfitz -- added second argument
-		else
-		{
-			Cache_Move (c);	// try to move it
-			prev = c;
-		}
 	}
 }
 
@@ -718,15 +731,15 @@ Size should already include the header and padding
 cache_system_t *Cache_TryAlloc (int size, qboolean nobottom)
 {
 	cache_system_t	*cs, *new_cs;
+	int ofs = q_max (hunk_low_used, hunk_lastseg->base);
 
 // is the cache completely empty?
-
 	if (!nobottom && cache_head.prev == &cache_head)
 	{
-		if (hunk_size - hunk_high_used - hunk_low_used < size)
+		if ((ofs - hunk_lastseg->base) + size > hunk_lastseg->size)
 			Sys_Error ("Cache_TryAlloc: %i is greater then free hunk", size);
 
-		new_cs = (cache_system_t *) (hunk_base + hunk_low_used);
+		new_cs = (cache_system_t *) (SEG_MEM (hunk_lastseg) + ofs - hunk_lastseg->base);
 		memset (new_cs, 0, sizeof(*new_cs));
 		new_cs->size = size;
 
@@ -739,7 +752,7 @@ cache_system_t *Cache_TryAlloc (int size, qboolean nobottom)
 
 // search from the bottom up for space
 
-	new_cs = (cache_system_t *) (hunk_base + hunk_low_used);
+	new_cs = (cache_system_t *) (SEG_MEM (hunk_lastseg) + ofs - hunk_lastseg->base);
 	cs = cache_head.next;
 
 	do
@@ -769,7 +782,7 @@ cache_system_t *Cache_TryAlloc (int size, qboolean nobottom)
 	} while (cs != &cache_head);
 
 // try to allocate one at the very end
-	if ( hunk_base + hunk_size - hunk_high_used - (byte *)new_cs >= size)
+	if ((byte *)new_cs - SEG_MEM (hunk_lastseg) + size <= hunk_lastseg->size)
 	{
 		memset (new_cs, 0, sizeof(*new_cs));
 		new_cs->size = size;
@@ -824,7 +837,7 @@ Cache_Report
 */
 void Cache_Report (void)
 {
-	Con_DPrintf ("%4.1f megabyte data cache\n", (hunk_size - hunk_high_used - hunk_low_used) / (float)(1024*1024) );
+	Con_DPrintf ("%4.1f megabyte data cache\n", (Hunk_Size () - hunk_low_used) / (float)(1024*1024) );
 }
 
 /*
@@ -967,10 +980,12 @@ void Memory_Init (void *buf, int size)
 	int p;
 	int zonesize = DYNAMIC_SIZE;
 
-	hunk_base = (byte *) buf;
-	hunk_size = size;
+	hunk_firstseg = (hunkseg_t *) buf;
+	hunk_firstseg->next = NULL;
+	hunk_firstseg->base = 0;
+	hunk_firstseg->size = size - sizeof (hunkseg_t);
+	hunk_lastseg = hunk_firstseg;
 	hunk_low_used = 0;
-	hunk_high_used = 0;
 
 	Cache_Init ();
 	p = COM_CheckParm ("-zone");

@@ -1762,6 +1762,8 @@ static void PR_MergeEngineFieldDefs (void)
 	{	//we now know how many entries we need to add...
 		ddef_t *olddefs = qcvm->fielddefs;
 		qcvm->fielddefs = malloc(maxdefs * sizeof(*qcvm->fielddefs));
+		if (!qcvm->fielddefs)
+			Sys_Error ("PR_MergeEngineFieldDefs: out of memory (%d defs)", maxdefs);
 		memcpy(qcvm->fielddefs, olddefs, qcvm->progs->numfielddefs*sizeof(*qcvm->fielddefs));
 		if (olddefs != (ddef_t *)((byte *)qcvm->progs + qcvm->progs->ofs_fielddefs))
 			free(olddefs);
@@ -1964,7 +1966,7 @@ qboolean PR_LoadProgs (const char *filename, qboolean fatal)
 	qcvm->progs = (dprograms_t *)COM_LoadHunkFile (filename, NULL);
 	if (!qcvm->progs)
 		return false;
-	Con_DPrintf ("Programs occupy %lliK.\n", com_filesize/1024);
+	Con_DPrintf ("Programs occupy %" SDL_PRIs64 "K.\n", com_filesize/1024);
 
 	qcvm->crc = CRC_Block (qcvm->progs, com_filesize);
 

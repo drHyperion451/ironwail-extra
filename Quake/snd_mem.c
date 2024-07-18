@@ -65,12 +65,10 @@ static void ResampleSfx (sfx_t *sfx, int inrate, int inwidth, byte *data)
 	else
 	{
 // general case
-		samplefrac = 0;
+		srcsample = samplefrac = 0;
 		fracstep = stepscale*256;
 		for (i = 0; i < outcount; i++)
 		{
-			srcsample = samplefrac >> 8;
-			samplefrac += fracstep;
 			if (inwidth == 2)
 				sample = LittleShort ( ((short *)data)[srcsample] );
 			else
@@ -79,6 +77,9 @@ static void ResampleSfx (sfx_t *sfx, int inrate, int inwidth, byte *data)
 				((short *)sc->data)[i] = sample;
 			else
 				((signed char *)sc->data)[i] = sample >> 8;
+			samplefrac += fracstep;
+			srcsample += samplefrac >> 8;
+			samplefrac &= 255;
 		}
 	}
 }
@@ -98,7 +99,6 @@ sfxcache_t *S_LoadSound (sfx_t *s)
 	int		len;
 	float	stepscale;
 	sfxcache_t	*sc;
-	byte	stackbuf[1*1024];		// avoid dirtying the cache heap
 
 // see if still in memory
 	sc = (sfxcache_t *) Cache_Check (&s->cache);
@@ -113,7 +113,7 @@ sfxcache_t *S_LoadSound (sfx_t *s)
 
 //	Con_Printf ("loading %s\n",namebuffer);
 
-	data = COM_LoadStackFile(namebuffer, stackbuf, sizeof(stackbuf), NULL);
+	data = COM_LoadMallocFile (namebuffer, NULL);
 
 	if (!data)
 	{
@@ -124,12 +124,14 @@ sfxcache_t *S_LoadSound (sfx_t *s)
 	info = GetWavinfo (s->name, data, com_filesize);
 	if (info.channels != 1)
 	{
+		free (data);
 		Con_Printf ("%s is a stereo sample\n",s->name);
 		return NULL;
 	}
 
 	if (info.width != 1 && info.width != 2)
 	{
+		free (data);
 		Con_Printf("%s is not 8 or 16 bit\n", s->name);
 		return NULL;
 	}
@@ -141,13 +143,17 @@ sfxcache_t *S_LoadSound (sfx_t *s)
 
 	if (info.samples == 0 || len == 0)
 	{
+		free (data);
 		Con_Printf("%s has zero samples\n", s->name);
 		return NULL;
 	}
 
 	sc = (sfxcache_t *) Cache_Alloc ( &s->cache, len + sizeof(sfxcache_t), s->name);
 	if (!sc)
+	{
+		free (data);
 		return NULL;
+	}
 
 	sc->length = info.samples;
 	sc->loopstart = info.loopstart;
@@ -156,6 +162,8 @@ sfxcache_t *S_LoadSound (sfx_t *s)
 	sc->stereo = info.channels;
 
 	ResampleSfx (s, sc->speed, sc->width, data + info.dataofs);
+
+	free (data);
 
 	return sc;
 }
@@ -344,6 +352,13 @@ wavinfo_t GetWavinfo (const char *name, byte *wav, int wavlength)
 	}
 	else
 		info.samples = samples;
+
+	if (info.loopstart >= info.samples)
+	{
+		Con_Warning ("%s has loop start >= end\n", name);
+		info.loopstart = -1;
+		info.samples = samples;
+	}
 
 	info.dataofs = data_p - wav;
 

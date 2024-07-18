@@ -77,6 +77,8 @@ static filelist_item_t *FileList_AddWithData (const char *name, const void *data
 	}
 
 	item = (filelist_item_t *) malloc (sizeof(filelist_item_t) + datasize);
+	if (!item)
+		Sys_Error ("FileList_AddWithData: out of memory on %" SDL_PRIu64 " bytes (%s)", (uint64_t)(sizeof(filelist_item_t) + datasize), name);
 	q_strlcpy (item->name, name, sizeof(item->name));
 	if (datasize)
 	{

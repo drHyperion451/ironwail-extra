@@ -488,6 +488,8 @@ void GL_BuildLightmaps (void)
 	);
 
 	lightmap_data = (unsigned *) calloc (lmsize, sizeof (*lightmap_data));
+	if (!lightmap_data)
+		Sys_Error ("GL_BuildLightmaps: out of memory on %" SDL_PRIu64 " bytes", (uint64_t)(lmsize * sizeof (*lightmap_data)));
 
 	// compute offsets for each lightmap block
 	for (i=0; i<lightmap_count; i++)
@@ -604,6 +606,8 @@ void GL_BuildBModelVertexBuffer (void)
 // build vertex array
 	varray_bytes = sizeof (glvert_t) * numverts;
 	varray = (glvert_t *) malloc (varray_bytes);
+	if (!varray)
+		Sys_Error ("GL_BuildBModelVertexBuffer: out of memory on %u bytes", varray_bytes);
 	varray_index = 0;
 	
 	for (j=1 ; j<MAX_MODELS ; j++)

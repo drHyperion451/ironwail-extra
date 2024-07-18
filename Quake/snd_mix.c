@@ -218,7 +218,10 @@ static void S_UpdateFilter(filter_t *filter, int M, float f_c)
 		filter->kernelsize = (M + 1) + 16 - ((M + 1) % 16);
 		filter->memory = (float *) calloc(filter->kernelsize, sizeof(float));
 		filter->kernel = (float *) calloc(filter->kernelsize, sizeof(float));
-		
+
+		if (!filter->memory || !filter->kernel)
+			Sys_Error ("S_UpdateFilter: out of memory (%" SDL_PRIu64 " bytes)", (uint64_t)(filter->kernelsize * sizeof (float)));
+
 		S_MakeBlackmanWindowKernel(filter->kernel, M, f_c);
 	}
 }
@@ -238,12 +241,16 @@ known to be 0 and skip 3/4 of the filter kernel.
 static void S_ApplyFilter(filter_t *filter, int *data, int stride, int count)
 {
 	int i, j;
+	size_t inputsize;
 	float *input;
 	const int kernelsize = filter->kernelsize;
 	const float *kernel = filter->kernel;
 	int parity;
 
-	input = (float *) malloc(sizeof(float) * (filter->kernelsize + count));
+	inputsize = sizeof(float) * (filter->kernelsize + count);
+	input = (float *) malloc(inputsize);
+	if (!input)
+		Sys_Error ("S_ApplyFilter: out of memory on %" SDL_PRIu64 " bytes", (uint64_t)inputsize);
 
 // set up the input buffer
 // memory holds the previous filter->kernelsize samples of input.

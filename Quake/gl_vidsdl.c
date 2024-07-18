@@ -562,7 +562,7 @@ static qboolean VID_SetMode (int width, int height, int refreshrate, qboolean fu
 // fix the leftover Alt from any Alt-Tab or the like that switched us away
 	ClearAllStates ();
 
-	Con_SafePrintf ("Video mode: %dx%dx%d Z%d S%d %dHz\n",
+	Con_SafePrintf ("Video mode: %d x %d %dbit Z%d S%d %dHz\n",
 				VID_GetCurrentWidth(),
 				VID_GetCurrentHeight(),
 				VID_GetCurrentBPP(),
@@ -1417,7 +1417,7 @@ VID_DescribeCurrentMode_f
 static void VID_DescribeCurrentMode_f (void)
 {
 	if (draw_context)
-		Con_Printf("%dx%dx%d %dHz %s\n",
+		Con_Printf("   %d x %d | %d bit | %d Hz | %s\n",
 			VID_GetCurrentWidth(),
 			VID_GetCurrentHeight(),
 			VID_GetCurrentBPP(),
@@ -1443,7 +1443,7 @@ static void VID_DescribeModes_f (void)
 		{
 			if (count > 0)
 				Con_SafePrintf ("\n");
-			Con_SafePrintf ("   %4i x %4i x %i : %i", modelist[i].width, modelist[i].height, modelist[i].bpp, modelist[i].refreshrate);
+			Con_SafePrintf ("  %5i x %4i | %2i bit | %i Hz", modelist[i].width, modelist[i].height, modelist[i].bpp, modelist[i].refreshrate);
 			lastwidth = modelist[i].width;
 			lastheight = modelist[i].height;
 			lastbpp = modelist[i].bpp;
