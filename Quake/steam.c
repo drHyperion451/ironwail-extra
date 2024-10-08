@@ -46,14 +46,18 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 	x(void*,	SteamInternal_CreateInterface, (const char *which))\
 	x(void*,	SteamAPI_ISteamClient_GetISteamFriends, (void *client, int huser, int hpipe, const char *version))\
 	x(void*,	SteamAPI_ISteamClient_GetISteamUserStats, (void *client, int huser, int hpipe, const char *version))\
+	x(void*,	SteamAPI_ISteamClient_GetISteamScreenshots, (void *client, int huser, int hpipe, const char *version))\
 	x(void,		SteamAPI_ISteamFriends_ClearRichPresence, (void *client))\
 	x(int,		SteamAPI_ISteamFriends_SetRichPresence, (void *friends, const char *key, const char *val))\
 	x(int,		SteamAPI_ISteamUserStats_SetAchievement, (void *userstats, const char *name))\
 	x(int,		SteamAPI_ISteamUserStats_StoreStats, (void *userstats))\
+	x(int,		SteamAPI_ISteamScreenshots_HookScreenshots, (void *screenshots, int hook))\
+	x(uint32_t,	SteamAPI_ISteamScreenshots_WriteScreenshot, (void *screenshots, const void *data, uint32_t size, int width, int height))\
 
 #define STEAMAPI_CLIENT_VERSION							"SteamClient015"
 #define STEAMAPI_FRIENDS_VERSION						"SteamFriends015"
 #define STEAMAPI_USERSTATS_VERSION						"STEAMUSERSTATS_INTERFACE_VERSION012"
+#define STEAMAPI_SCREENSHOTS_VERSION					"STEAMSCREENSHOTS_INTERFACE_VERSION003"
 
 #define STEAMAPI_DECLARE_FUNCTION(ret, name, args)		static ret (STEAMAPI *name##_Func) args;
 STEAMAPI_FUNCTIONS (STEAMAPI_DECLARE_FUNCTION)
@@ -80,6 +84,7 @@ static struct
 	void			*client;
 	void			*friends;
 	void			*userstats;
+	void			*screenshots;
 	qboolean		needs_shutdown;
 } steamapi;
 
@@ -550,6 +555,12 @@ qboolean Steam_Init (const steamgame_t *game)
 		return false;
 	}
 
+	steamapi.screenshots = SteamAPI_ISteamClient_GetISteamScreenshots_Func (steamapi.client, steamapi.hsteamuser, steamapi.hsteampipe, STEAMAPI_SCREENSHOTS_VERSION);
+	if (!steamapi.screenshots)
+		Sys_Printf ("Couldn't initialize SteamScreenshots interface\n");
+	else
+		SteamAPI_ISteamScreenshots_HookScreenshots_Func (steamapi.screenshots, true);
+
 	Sys_Printf ("Steam API initialized\n");
 
 	Steam_ClearStatus ();
@@ -637,6 +648,26 @@ void Steam_SetStatus_Multiplayer (int players, int maxplayers, const char *map)
 		SteamAPI_ISteamFriends_SetRichPresence_Func (steamapi.friends, "map", map);
 		SteamAPI_ISteamFriends_SetRichPresence_Func (steamapi.friends, "steam_display", "#multiplayer");
 	}
+}
+
+/*
+========================
+Steam_SaveScreenshot
+========================
+*/
+qboolean Steam_SaveScreenshot (const void *rgb, int width, int height)
+{
+	if (steamapi.screenshots)
+	{
+		byte *flipped = Image_CopyFlipped (rgb, width, height, 24);
+		if (flipped)
+		{
+			qboolean result = SteamAPI_ISteamScreenshots_WriteScreenshot_Func (steamapi.screenshots, flipped, width*height*3, width, height) != 0;
+			free (flipped);
+			return result;
+		}
+	}
+	return false;
 }
 
 /*

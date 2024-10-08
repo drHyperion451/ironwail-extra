@@ -7079,11 +7079,8 @@ static void M_UpdateBounds (void)
 
 void M_Draw (void)
 {
-	qboolean options;
 	if (m_state == m_none || key_dest != key_menu)
 		return;
-
-	options = (M_GetBaseState (m_state) == m_options);
 
 	M_UpdateBounds ();
 

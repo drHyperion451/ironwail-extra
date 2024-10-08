@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // screen.c -- master for refresh, status bar, console, chat, notify, etc
 
 #include "quakedef.h"
+#include "steam.h"
 #include <time.h>
 
 /*
@@ -1709,18 +1710,14 @@ static void SCR_ScreenShot_Usage (void)
 
 /*
 ==================
-SCR_ScreenShot_f -- johnfitz -- rewritten to use Image_WriteTGA
+SCR_ScreenShot_f
 ==================
 */
 void SCR_ScreenShot_f (void)
 {
 	byte	*buffer;
 	char	ext[4];
-	char	basename[MAX_OSPATH];
-	char	imagename[MAX_OSPATH];
-	char	checkname[MAX_OSPATH];
 	int		i, quality;
-	qboolean	ok, has_vars;
 
 	Q_strncpy (ext, "png", sizeof(ext));
 
@@ -1749,41 +1746,6 @@ void SCR_ScreenShot_f (void)
 		return;
 	}
 
-// find a file name to save it to
-	has_vars = SCR_ExpandVariables (cl_screenshotname.string, basename, sizeof (basename));
-	if (!basename[0])
-		q_strlcpy (basename, SCREENSHOT_PREFIX, sizeof (basename));
-
-	if (!has_vars)
-		goto append_index;
-
-	q_snprintf (imagename, sizeof (imagename), "%s.%s", basename, ext);
-	q_snprintf (checkname, sizeof (checkname), "%s/%s", com_gamedir, imagename);
-	if (Sys_FileType (checkname) != FS_ENT_NONE) // base name already used, try appending an index
-	{
-	append_index:
-		// append underscore if basename ends with a digit
-		i = (int) strlen (basename);
-		if (i && i + 1 < (int) countof (basename) && (unsigned int)(basename[i - 1] - '0') < 10u)
-		{
-			basename[i] = '_';
-			basename[i + 1] = '\0';
-		}
-
-		for (i = has_vars; i < 10000; i++)
-		{
-			q_snprintf (imagename, sizeof (imagename), "%s%04i.%s", basename, i, ext);
-			q_snprintf (checkname, sizeof (checkname), "%s/%s", com_gamedir, imagename);
-			if (Sys_FileType (checkname) == FS_ENT_NONE)
-				break;	// file doesn't exist
-		}
-		if (i == 10000)
-		{
-			Con_Printf ("SCR_ScreenShot_f: Couldn't find an unused filename\n");
-			return;
-		}
-	}
-
 //get data
 	if (!(buffer = (byte *) malloc(glwidth*glheight*3)))
 	{
@@ -1805,24 +1767,68 @@ void SCR_ScreenShot_f (void)
 	glReadPixels (glx, gly, glwidth, glheight, GL_RGB, GL_UNSIGNED_BYTE, buffer);
 
 // now write the file
-	if (!q_strncasecmp (ext, "png", sizeof(ext)))
-		ok = Image_WritePNG (imagename, buffer, glwidth, glheight, 24, false);
-	else if (!q_strncasecmp (ext, "tga", sizeof(ext)))
-		ok = Image_WriteTGA (imagename, buffer, glwidth, glheight, 24, false);
-	else if (!q_strncasecmp (ext, "jpg", sizeof(ext)))
-		ok = Image_WriteJPG (imagename, buffer, glwidth, glheight, 24, quality, false);
-	else
-		ok = false;
-
-	UTF8_ToQuake (basename, sizeof (basename), imagename);
-	if (ok)
+	if (!Steam_SaveScreenshot (buffer, glwidth, glheight))
 	{
-		Con_SafePrintf ("Wrote ");
-		Con_LinkPrintf (va("%s/%s", com_gamedir, imagename), "%s", basename);
-		Con_SafePrintf ("\n");
+		char		basename[MAX_OSPATH];
+		char		imagename[MAX_OSPATH];
+		char		checkname[MAX_OSPATH];
+		qboolean	ok, has_vars;
+
+	// find a file name to save it to
+		has_vars = SCR_ExpandVariables (cl_screenshotname.string, basename, sizeof (basename));
+		if (!basename[0])
+			q_strlcpy (basename, SCREENSHOT_PREFIX, sizeof (basename));
+
+		if (!has_vars)
+			goto append_index;
+
+		q_snprintf (imagename, sizeof (imagename), "%s.%s", basename, ext);
+		q_snprintf (checkname, sizeof (checkname), "%s/%s", com_gamedir, imagename);
+		if (Sys_FileType (checkname) != FS_ENT_NONE) // base name already used, try appending an index
+		{
+		append_index:
+			// append underscore if basename ends with a digit
+			i = (int) strlen (basename);
+			if (i && i + 1 < (int) countof (basename) && (unsigned int)(basename[i - 1] - '0') < 10u)
+			{
+				basename[i] = '_';
+				basename[i + 1] = '\0';
+			}
+
+			for (i = has_vars; i < 10000; i++)
+			{
+				q_snprintf (imagename, sizeof (imagename), "%s%04i.%s", basename, i, ext);
+				q_snprintf (checkname, sizeof (checkname), "%s/%s", com_gamedir, imagename);
+				if (Sys_FileType (checkname) == FS_ENT_NONE)
+					break;	// file doesn't exist
+			}
+			if (i == 10000)
+			{
+				Con_Printf ("SCR_ScreenShot_f: Couldn't find an unused filename\n");
+				free (buffer);
+				return;
+			}
+		}
+
+		if (!q_strncasecmp (ext, "png", sizeof(ext)))
+			ok = Image_WritePNG (imagename, buffer, glwidth, glheight, 24, false);
+		else if (!q_strncasecmp (ext, "tga", sizeof(ext)))
+			ok = Image_WriteTGA (imagename, buffer, glwidth, glheight, 24, false);
+		else if (!q_strncasecmp (ext, "jpg", sizeof(ext)))
+			ok = Image_WriteJPG (imagename, buffer, glwidth, glheight, 24, quality, false);
+		else
+			ok = false;
+
+		UTF8_ToQuake (basename, sizeof (basename), imagename);
+		if (ok)
+		{
+			Con_SafePrintf ("Wrote ");
+			Con_LinkPrintf (va("%s/%s", com_gamedir, imagename), "%s", basename);
+			Con_SafePrintf ("\n");
+		}
+		else
+			Con_Printf ("SCR_ScreenShot_f: Couldn't create %s\n", basename);
 	}
-	else
-		Con_Printf ("SCR_ScreenShot_f: Couldn't create %s\n", basename);
 
 	free (buffer);
 }

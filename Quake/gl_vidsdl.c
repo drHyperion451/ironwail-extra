@@ -1108,8 +1108,6 @@ static void GL_SetStateEx (unsigned mask, unsigned force)
 
 	if (diff & GLS_MASK_BLEND)
 	{
-		extern cvar_t r_oit;
-
 		switch (mask & GLS_MASK_BLEND)
 		{
 			default:
