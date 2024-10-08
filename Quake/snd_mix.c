@@ -505,7 +505,7 @@ void S_PaintChannels (int endtime)
 		}
 
 	// apply a lowpass filter
-		if (sndspeed.value == 11025 && shm->speed == 44100)
+		if (snd_filter.value == 1)
 		{
 			static filter_t memory_l, memory_r;
 			S_LowpassFilter((int *)paintbuffer,       2, end - paintedtime, &memory_l);

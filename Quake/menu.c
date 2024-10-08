@@ -66,6 +66,7 @@ extern cvar_t r_md5;
 extern cvar_t r_lerpmodels;
 extern cvar_t r_lerpmove;
 extern cvar_t snd_waterfx;
+extern cvar_t snd_filter;
 extern cvar_t joy_deadzone_look;
 extern cvar_t joy_deadzone_move;
 extern cvar_t joy_deadzone_trigger;
@@ -3239,6 +3240,7 @@ void M_Menu_Gamepad_f (void)
 		item (SPACER,					"")								\
 		item (OPT_MUSICEXT,				"External Music")				\
 		item (OPT_WATERSNDFX,			"Water Muffling")				\
+		item (OPT_SNDFILTER,			"Sound Filter")					\
 	end_menu ()															\
 ////////////////////////////////////////////////////////////////////////
 
@@ -3706,6 +3708,9 @@ void M_AdjustSliders (int dir)
 		break;
 	case OPT_WATERSNDFX:
 		Cbuf_AddText ("toggle snd_waterfx\n");
+		break;
+	case OPT_SNDFILTER:
+		Cbuf_AddText ("toggle snd_filter\n");
 		break;
 
 	case OPT_HUDSTYLE:	// hud style
@@ -4352,6 +4357,10 @@ static void M_Options_DrawItem (int y, int item)
 
 	case OPT_WATERSNDFX:
 		M_DrawCheckbox (x, y, snd_waterfx.value);
+		break;
+
+	case OPT_SNDFILTER:
+		M_DrawCheckbox (x, y, snd_filter.value);
 		break;
 
 	case OPT_ALWAYSRUN:
