@@ -25,7 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 extern edict_t **bbox_linked;
 
-int		type_size[8] = {
+const int type_size[NUM_TYPE_SIZES] = {
 	1,					// ev_void
 	1,	// sizeof(string_t) / 4		// ev_string
 	1,					// ev_float
@@ -35,8 +35,6 @@ int		type_size[8] = {
 	1,	// sizeof(func_t) / 4		// ev_function
 	1	// sizeof(void *) / 4		// ev_pointer
 };
-
-#define NUM_TYPE_SIZES (int)Q_COUNTOF(type_size)
 
 static ddef_t	*ED_FieldAtOfs (int ofs);
 static qboolean	ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned);
@@ -181,8 +179,11 @@ Sets everything to NULL
 */
 void ED_ClearEdict (edict_t *e)
 {
+	if (!e->free)
+		SV_UnlinkEdict (e);
+	else
+		ED_RemoveFromFreeList (e);
 	memset (&e->v, 0, qcvm->progs->entityfields * 4);
-	ED_RemoveFromFreeList (e);
 }
 
 /*
@@ -262,16 +263,14 @@ ED_GlobalAtOfs
 */
 static ddef_t *ED_GlobalAtOfs (int ofs)
 {
-	ddef_t		*def;
-	int			i;
+	if (ofs < 0 || ofs > qcvm->maxglobalofs)
+		return NULL;
 
-	for (i = 0; i < qcvm->progs->numglobaldefs; i++)
-	{
-		def = &qcvm->globaldefs[i];
-		if (def->ofs == ofs)
-			return def;
-	}
-	return NULL;
+	ofs = qcvm->ofstoglobal[ofs];
+	if (ofs < 0)
+		return NULL;
+
+	return &qcvm->globaldefs[ofs];
 }
 
 /*
@@ -281,16 +280,14 @@ ED_FieldAtOfs
 */
 static ddef_t *ED_FieldAtOfs (int ofs)
 {
-	ddef_t		*def;
-	int			i;
+	if (ofs < 0 || ofs > qcvm->maxfieldofs)
+		return NULL;
 
-	for (i = 0; i < qcvm->progs->numfielddefs; i++)
-	{
-		def = &qcvm->fielddefs[i];
-		if (def->ofs == ofs)
-			return def;
-	}
-	return NULL;
+	ofs = qcvm->ofstofield[ofs];
+	if (ofs < 0)
+		return NULL;
+
+	return &qcvm->fielddefs[ofs];
 }
 
 /*
@@ -1421,6 +1418,24 @@ const char *ED_ParseEdict (const char *data, edict_t *ent)
 	return data;
 }
 
+/*
+================
+ED_IsSkillSelector
+================
+*/
+static qboolean ED_IsSkillSelector (const edict_t *ent)
+{
+	int skill;
+	const char *classname = PR_GetString (ent->v.classname);
+
+	if (strcmp (classname, "trigger_setskill") == 0 || strcmp (classname, "target_setskill") == 0)
+		return true;
+	if (strcmp (classname, "info_command") == 0 && (int)ent->v.message != 0 && sscanf (PR_GetString (ent->v.message), "skill %d", &skill) == 1)
+		return true;
+
+	return false;
+}
+
 
 /*
 ================
@@ -1462,6 +1477,51 @@ void ED_LoadFromFile (const char *data)
 			ent = ED_Alloc ();
 		data = ED_ParseEdict (data, ent);
 
+		if (!ent->v.classname)
+		{
+			Con_SafePrintf ("No classname for:\n"); //johnfitz -- was Con_Printf
+			ED_Print (ent);
+			ED_Free (ent);
+			continue;
+		}
+
+		classname = PR_GetString (ent->v.classname);
+
+		if (sv.mapchecks.active)
+		{
+			int skillflags = (int)ent->v.spawnflags & (SPAWNFLAG_NOT_EASY|SPAWNFLAG_NOT_MEDIUM|SPAWNFLAG_NOT_HARD);
+			if (!(skillflags & SPAWNFLAG_NOT_EASY))
+				sv.mapchecks.skill_ents[0]++;
+			if (!(skillflags & SPAWNFLAG_NOT_MEDIUM))
+				sv.mapchecks.skill_ents[1]++;
+			if (!(skillflags & SPAWNFLAG_NOT_HARD))
+				sv.mapchecks.skill_ents[2]++;
+
+			if (strcmp (classname, "trigger_changelevel") == 0)
+			{
+				ddef_t *mapfield = ED_FindField ("map");
+				sv.mapchecks.trigger_changelevel++;
+				if (mapfield && (mapfield->type & ~DEF_SAVEGLOBAL) == ev_string)
+				{
+					eval_t		*val = GetEdictFieldValue (ent, mapfield->ofs);
+					const char	*map = COM_SkipSpace (PR_GetString (val->string));
+					if (*map)
+					{
+						sv.mapchecks.changelevel = map;
+						sv.mapchecks.valid_changelevel++;
+					}
+				}
+			}
+			else if (ED_IsSkillSelector (ent))
+				sv.mapchecks.skill_triggers++;
+			else if (strcmp (classname, "info_intermission") == 0)
+				sv.mapchecks.intermission++;
+			else if (strcmp (classname, "info_player_coop") == 0)
+				sv.mapchecks.coop_spawns++;
+			else if (strcmp (classname, "info_player_deathmatch") == 0)
+				sv.mapchecks.dm_spawns++;
+		}
+
 		// remove things from different skill levels or deathmatch
 		if (deathmatch.value)
 		{
@@ -1481,18 +1541,7 @@ void ED_LoadFromFile (const char *data)
 			continue;
 		}
 
-//
-// immediately call spawn function
-//
-		if (!ent->v.classname)
-		{
-			Con_SafePrintf ("No classname for:\n"); //johnfitz -- was Con_Printf
-			ED_Print (ent);
-			ED_Free (ent);
-			continue;
-		}
-
-		classname = PR_GetString (ent->v.classname);
+		// remove monsters if nomonsters is set
 		if (sv.nomonsters && !Q_strncmp (classname, "monster_", 8))
 		{
 			ED_Free (ent);
@@ -1500,6 +1549,10 @@ void ED_LoadFromFile (const char *data)
 			continue;
 		}
 
+
+//
+// immediately call spawn function
+//
 	// look for the spawn function
 		func = ED_FindFunction (classname);
 
@@ -1954,6 +2007,91 @@ static void PR_FindEntityFields (void)
 
 /*
 ===============
+PR_CompareFunction
+===============
+*/
+static int PR_CompareFunction (const void *pa, const void *pb)
+{
+	const dfunction_t *fa = &qcvm->functions[*(const int *)pa];
+	const dfunction_t *fb = &qcvm->functions[*(const int *)pb];
+	return fa->first_statement - fb->first_statement;
+}
+
+/*
+===============
+PR_FindFunctionRanges
+===============
+*/
+static void PR_FindFunctionRanges (void)
+{
+	int		i, mark;
+	int		*order;
+
+	qcvm->functionsizes = (int *) Hunk_AllocName (qcvm->progs->numfunctions * sizeof (*order), "func_sizes");
+	mark = Hunk_LowMark ();
+
+	order = (int *) Hunk_AllocNoFill (qcvm->progs->numfunctions * sizeof (*order));
+	for (i = 0; i < qcvm->progs->numfunctions; i++)
+		order[i] = i;
+	qsort (order, qcvm->progs->numfunctions, sizeof (*order), &PR_CompareFunction);
+
+	for (i = 0; i < qcvm->progs->numfunctions; i++)
+	{
+		dfunction_t *f = &qcvm->functions[order[i]];
+		if (f->first_statement <= 0)
+			continue;
+		if (i == qcvm->progs->numfunctions - 1)
+			qcvm->functionsizes[order[i]] = qcvm->progs->numstatements - f->first_statement;
+		else
+			qcvm->functionsizes[order[i]] = qcvm->functions[order[i + 1]].first_statement - f->first_statement;
+	}
+
+	Hunk_FreeToLowMark (mark);
+}
+
+/*
+===============
+PR_FillOffsetTables
+===============
+*/
+static void PR_FillOffsetTables (void)
+{
+	int		pass, i, maxofs, *data;
+	struct
+	{
+		int			**offsets;
+		int			*maxofs;
+		int			numdefs;
+		ddef_t		*defs;
+		const char	*allocname;
+	}
+	passes[] =
+	{
+		{ &qcvm->ofstofield,	&qcvm->maxfieldofs,		qcvm->progs->numfielddefs,	qcvm->fielddefs,	"ofstofield"	},
+		{ &qcvm->ofstoglobal,	&qcvm->maxglobalofs,	qcvm->progs->numglobaldefs,	qcvm->globaldefs,	"ofstoglobal"	},
+	};
+
+	for (pass = 0; pass < (int) Q_COUNTOF (passes); pass++)
+	{
+		// find maximum offset
+		for (i = 1, maxofs = 0; i < passes[pass].numdefs; i++)
+			maxofs = q_max (maxofs, passes[pass].defs[i].ofs);
+		*passes[pass].maxofs = maxofs;
+
+		// alloc table and fill it with -1
+		data = *passes[pass].offsets = (int *) Hunk_AllocNameNoFill ((maxofs + 1) * sizeof (int), passes[pass].allocname);
+		for (i = 0; i <= maxofs; i++)
+			data[i] = -1;
+
+		// fill actual offsets in descending order so that earlier defs are written last
+		// this preserves the behavior of ED_FieldAtOfs/ED_GlobalAtOfs, which stopped at the first match
+		for (i = passes[pass].numdefs - 1; i > 0; i--)
+			data[passes[pass].defs[i].ofs] = i;
+	}
+}
+
+/*
+===============
 PR_LoadProgs
 ===============
 */
@@ -2105,6 +2243,8 @@ qboolean PR_LoadProgs (const char *filename, qboolean fatal)
 	PR_EnableExtensions ();
 	PR_FindSavegameFields ();
 	PR_FindEntityFields ();
+	PR_FindFunctionRanges ();
+	PR_FillOffsetTables ();
 
 	qcvm->effects_mask = PR_FindSupportedEffects ();
 

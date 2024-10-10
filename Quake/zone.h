@@ -84,8 +84,10 @@ char *Z_Strdup (const char *s);
 }
 #endif
 
-void *Hunk_Alloc (int size);		// returns 0 filled memory
-void *Hunk_AllocName (int size, const char *name);
+void *Hunk_Alloc (int size); // returns 0 filled memory
+void *Hunk_AllocNoFill (int size); // returns uninitialized memory
+void *Hunk_AllocName (int size, const char *name); // returns 0 filled memory
+void *Hunk_AllocNameNoFill (int size, const char *name); // returns uninitialized memory
 char *Hunk_Strdup (const char *s, const char *name);
 
 int	Hunk_LowMark (void);

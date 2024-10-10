@@ -221,7 +221,23 @@ void VID_SetMouseCursor (mousecursor_t cursor)
 //
 //==========================================================================
 
+#define MIN_GAMMA		0.1f
+
 static int fsaa;
+
+/*
+================
+VID_Gamma_f -- called when gamma changes
+================
+*/
+static void VID_Gamma_f (cvar_t *var)
+{
+	if (var->value < MIN_GAMMA)
+	{
+		Con_SafePrintf ("%s %g is too low, clamping to %g\n", var->name, var->value, MIN_GAMMA);
+		Cvar_SetValueQuick (var, MIN_GAMMA);
+	}
+}
 
 /*
 ================
@@ -231,6 +247,7 @@ VID_Gamma_Init -- call on init
 static void VID_Gamma_Init (void)
 {
 	Cvar_RegisterVariable (&vid_gamma);
+	Cvar_SetCallback (&vid_gamma, VID_Gamma_f);
 	Cvar_RegisterVariable (&vid_contrast);
 }
 
@@ -883,10 +900,10 @@ static qboolean GL_FindExtension (const char *name)
 GL_BeginGroup
 =============
 */
-static qboolean gldebug = false;
+static qboolean glmarkers = false;
 void GL_BeginGroup (const char *name)
 {
-	if (gldebug)
+	if (glmarkers)
 		GL_PushDebugGroupFunc (GL_DEBUG_SOURCE_APPLICATION, 0, -1, name);
 }
 
@@ -897,7 +914,7 @@ GL_EndGroup
 */
 void GL_EndGroup (void)
 {
-	if (gldebug)
+	if (glmarkers)
 		GL_PopDebugGroupFunc ();
 }
 
@@ -999,11 +1016,14 @@ static void GL_CheckExtensions (void)
 {
 	GL_InitFunctions (gl_core_functions, true);
 
+	if (COM_CheckParm ("-glmarkers"))
+		glmarkers = true;
+
 #ifdef NDEBUG
 	if (COM_CheckParm("-gldebug"))
 #endif
 	{
-		gldebug = true;
+		glmarkers = true;
 		GL_DebugMessageCallbackFunc (&GL_DebugCallback, NULL);
 		glEnable (GL_DEBUG_OUTPUT);
 		glEnable (GL_DEBUG_OUTPUT_SYNCHRONOUS);
@@ -1088,8 +1108,6 @@ static void GL_SetStateEx (unsigned mask, unsigned force)
 
 	if (diff & GLS_MASK_BLEND)
 	{
-		extern cvar_t r_oit;
-
 		switch (mask & GLS_MASK_BLEND)
 		{
 			default:
@@ -1097,7 +1115,7 @@ static void GL_SetStateEx (unsigned mask, unsigned force)
 				glBlendFunc(GL_ONE, GL_ZERO);
 				break;
 			case GLS_BLEND_ALPHA_OIT:
-				if (r_oit.value)
+				if (R_GetEffectiveAlphaMode () == ALPHAMODE_OIT)
 				{
 					GL_BlendFunciFunc(0, GL_ONE, GL_ONE); // accum
 					GL_BlendFunciFunc(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR); // revealage

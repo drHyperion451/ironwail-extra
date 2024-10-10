@@ -49,6 +49,7 @@ extern cvar_t r_noshadow_list;
 extern cvar_t gl_zfix; // QuakeSpasm z-fighting fix
 extern cvar_t r_alphasort;
 extern cvar_t r_oit;
+extern cvar_t r_dither;
 
 #if defined(USE_SIMD)
 extern cvar_t r_simd;
@@ -250,6 +251,7 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_pos);
 	Cvar_RegisterVariable (&r_alphasort);
 	Cvar_RegisterVariable (&r_oit);
+	Cvar_RegisterVariable (&r_dither);
 
 	Cvar_RegisterVariable (&gl_finish);
 	Cvar_RegisterVariable (&gl_clear);
@@ -461,6 +463,11 @@ void R_NewMap (void)
 	Sky_NewMap (); //johnfitz -- skybox in worldspawn
 	Fog_NewMap (); //johnfitz -- global fog in worldspawn
 	R_ParseWorldspawn (); //ericw -- wateralpha, lavaalpha, telealpha, slimealpha in worldspawn
+
+	// Load pointfile if map has no vis data and either developer mode is on or the game was started from a map editing tool
+	if (developer.value || map_checks.value)
+		if (!cl.worldmodel->visdata && COM_FileExists (va ("maps/%s.pts", cl.mapname), NULL))
+			Cbuf_AddText ("pointfile\n");
 }
 
 /*
@@ -494,10 +501,6 @@ void R_TimeRefresh_f (void)
 	stop = Sys_DoubleTime ();
 	time = stop-start;
 	Con_Printf ("%lf seconds (%.1lf fps)\n", time, 128/time);
-}
-
-void D_FlushCaches (void)
-{
 }
 
 static GLuint current_array_buffer;

@@ -337,23 +337,34 @@ static byte *Image_LoadLMP (FILE *f, int *width, int *height)
 {
 	lmpheader_t	qpic;
 	size_t		pix;
+	int			mark;
 	void		*data;
 
-	fread(&qpic, sizeof(qpic), 1, f);
+	if (fread (&qpic, sizeof(qpic), 1, f) != 1)
+	{
+		fclose (f);
+		return NULL;
+	}
 	qpic.width = LittleLong (qpic.width);
 	qpic.height = LittleLong (qpic.height);
 
 	pix = qpic.width*qpic.height;
 
-	if (com_filesize != 8+pix)
+	if (com_filesize != sizeof (qpic) + pix)
 	{
-		fclose(f);
+		fclose (f);
 		return NULL;
 	}
 
-	data = (byte *) Hunk_Alloc(pix); //+1 to allow reading padding byte on last line
-	fread(data, 1, pix, f);
-	fclose(f);
+	mark = Hunk_LowMark ();
+	data = (byte *) Hunk_Alloc (pix);
+	if (fread (data, 1, pix, f) != pix)
+	{
+		Hunk_FreeToLowMark (mark);
+		fclose (f);
+		return NULL;
+	}
+	fclose (f);
 
 	*width = qpic.width;
 	*height = qpic.height;
@@ -367,10 +378,11 @@ static byte *Image_LoadLMP (FILE *f, int *width, int *height)
 //
 //==============================================================================
 
-static byte *CopyFlipped(const byte *data, int width, int height, int bpp)
+byte* Image_CopyFlipped (const void *src, int width, int height, int bpp)
 {
-	int	y, rowsize;
-	byte	*flipped;
+	int			y, rowsize;
+	const byte	*data = (const byte *)src;
+	byte		*flipped;
 
 	rowsize = width * (bpp / 8);
 	flipped = (byte *) malloc(height * rowsize);
@@ -407,7 +419,7 @@ qboolean Image_WriteJPG (const char *name, byte *data, int width, int height, in
 
 	if (!upsidedown)
 	{
-		flipped = CopyFlipped (data, width, height, bpp);
+		flipped = Image_CopyFlipped (data, width, height, bpp);
 		if (!flipped)
 			return false;
 	}
@@ -436,7 +448,7 @@ qboolean Image_WritePNG (const char *name, byte *data, int width, int height, in
 
 	q_snprintf (pathname, sizeof(pathname), "%s/%s", com_gamedir, name);
 
-	flipped = (!upsidedown)? CopyFlipped (data, width, height, bpp) : data;
+	flipped = (!upsidedown)? Image_CopyFlipped (data, width, height, bpp) : data;
 	filters = (unsigned char *) malloc (height);
 	if (!filters || !flipped)
 	{

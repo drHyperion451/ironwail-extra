@@ -80,6 +80,7 @@ cvar_t	r_simd = {"r_simd","1",CVAR_ARCHIVE};
 #endif
 cvar_t	r_alphasort = {"r_alphasort","1",CVAR_ARCHIVE};
 cvar_t	r_oit = {"r_oit","1",CVAR_ARCHIVE};
+cvar_t	r_dither = {"r_dither", "1.0", CVAR_ARCHIVE};
 
 cvar_t	gl_finish = {"gl_finish","0",CVAR_NONE};
 cvar_t	gl_clear = {"gl_clear","1",CVAR_NONE};
@@ -111,6 +112,8 @@ cvar_t	r_noshadow_list = {"r_noshadow_list", "progs/flame2.mdl,progs/flame.mdl,p
 extern cvar_t	r_vfog;
 extern cvar_t	vid_fsaa;
 //johnfitz
+extern cvar_t	r_softemu_dither_screen;
+extern cvar_t	r_softemu_dither_texture;
 
 cvar_t	gl_zfix = {"gl_zfix", "1", CVAR_ARCHIVE}; // QuakeSpasm z-fighting fix
 
@@ -311,6 +314,8 @@ void GL_DeleteFrameBuffers (void)
 //
 //==============================================================================
 
+static const float NOISESCALE = 9.f / 255.f;
+
 extern GLuint gl_palette_lut;
 extern GLuint gl_palette_buffer[2];
 
@@ -322,12 +327,14 @@ GL_PostProcess
 void GL_PostProcess (void)
 {
 	int palidx, variant;
+	float dither;
 	if (!GL_NeedsPostprocess ())
 		return;
 
 	GL_BeginGroup ("Postprocess");
 
 	palidx =  GLPalette_Postprocess ();
+	dither = (softemu == SOFTEMU_FINE) ? NOISESCALE * r_dither.value * r_softemu_dither_screen.value : 0.f;
 
 	GL_BindFramebufferFunc (GL_FRAMEBUFFER, 0);
 	glViewport (glx, gly, glwidth, glheight);
@@ -339,7 +346,7 @@ void GL_PostProcess (void)
 	GL_BindNative (GL_TEXTURE1, GL_TEXTURE_3D, gl_palette_lut);
 	GL_BindBufferRange (GL_SHADER_STORAGE_BUFFER, 0, gl_palette_buffer[palidx], 0, 256 * sizeof (GLuint));
 	if (variant != 2) // some AMD drivers optimize out the uniform in variant #2
-		GL_Uniform3fFunc (0, vid_gamma.value, q_min(2.0f, q_max(1.0f, vid_contrast.value)), 1.f/r_refdef.scale);
+		GL_Uniform4fFunc (0, vid_gamma.value, q_min(2.0f, q_max(1.0f, vid_contrast.value)), 1.f/r_refdef.scale, dither);
 
 	glDrawArrays (GL_TRIANGLES, 0, 3);
 
@@ -561,6 +568,43 @@ void GL_DepthRange (zrange_t range)
 	}
 }
 
+/*
+=============
+R_GetAlphaMode
+=============
+*/
+alphamode_t R_GetAlphaMode (void)
+{
+	if (r_oit.value)
+		return ALPHAMODE_OIT;
+	return r_alphasort.value ? ALPHAMODE_SORTED : ALPHAMODE_BASIC;
+}
+
+/*
+=============
+R_GetEffectiveAlphaMode
+=============
+*/
+alphamode_t R_GetEffectiveAlphaMode (void)
+{
+	if (map_checks.value)
+		return ALPHAMODE_BASIC;
+	return R_GetAlphaMode ();
+}
+
+/*
+=============
+R_SetAlphaMode
+=============
+*/
+void R_SetAlphaMode (alphamode_t mode)
+{
+	Cvar_SetValueQuick (&r_oit, mode == ALPHAMODE_OIT);
+	if (mode != ALPHAMODE_OIT)
+		Cvar_SetValueQuick (&r_alphasort, mode == ALPHAMODE_SORTED);
+}
+
+
 //==============================================================================
 //
 // SETUP FRAME
@@ -590,7 +634,7 @@ static void R_SortEntities (void)
 	int i, j, pass;
 	int bins[1 << (MODSORT_BITS/2)];
 	int typebins[mod_numtypes*2];
-	qboolean alphasort = r_alphasort.value && !r_oit.value;
+	alphamode_t alphamode = R_GetEffectiveAlphaMode ();
 
 	if (!r_drawentities.value)
 		cl_numvisedicts = 0;
@@ -617,7 +661,7 @@ static void R_SortEntities (void)
 		entity_t *ent = cl_visedicts[i];
 		qboolean translucent = !ENTALPHA_OPAQUE (ent->alpha);
 
-		if (translucent && alphasort)
+		if (translucent && alphamode == ALPHAMODE_SORTED)
 		{
 			float dist, delta;
 			vec3_t mins, maxs;
@@ -631,7 +675,7 @@ static void R_SortEntities (void)
 			dist = sqrt (dist);
 			visedict_keys[i] = ~CLAMP (0, (int)dist, MODSORT_MASK);
 		}
-		else if (translucent && !r_oit.value)
+		else if (translucent && alphamode != ALPHAMODE_OIT)
 		{
 			// Note: -1 (0xfffff) for non-static entities (firstleaf=0),
 			// so they are sorted after static ones
@@ -838,7 +882,7 @@ GL_NeedsPostprocess
 */
 qboolean GL_NeedsPostprocess (void)
 {
-	return vid_gamma.value != 1.f || vid_contrast.value != 1.f || softemu || r_oit.value;
+	return vid_gamma.value != 1.f || vid_contrast.value != 1.f || softemu || R_GetEffectiveAlphaMode () == ALPHAMODE_OIT;
 }
 
 /*
@@ -923,6 +967,28 @@ void R_SetupView (void)
 	r_framedata.eyepos[1] = r_refdef.vieworg[1];
 	r_framedata.eyepos[2] = r_refdef.vieworg[2];
 	r_framedata.time = cl.time;
+	if (softemu == SOFTEMU_COARSE)
+	{
+		r_framedata.screendither = NOISESCALE * r_dither.value * r_softemu_dither_screen.value;
+		r_framedata.texturedither = NOISESCALE * r_dither.value * r_softemu_dither_texture.value;
+
+		// r_fullbright replaces the actual lightmap texture with a 2x2 50% grey one.
+		// Since texture-space dithering is applied on a scale of 1/16 of a lightmap texel,
+		// this would lead to massively overscaled dithering patterns, so we disable
+		// texture-space dithering in this case.
+		if (r_fullbright_cheatsafe)
+			r_framedata.texturedither = 0.f;
+	}
+	else if (softemu == SOFTEMU_OFF)
+	{
+		r_framedata.screendither = r_dither.value * (1.f/255.f);
+		r_framedata.texturedither = 0.f;
+	}
+	else // FINE (screen-space dithering applied during postprocessing), or BANDED (no dithering)
+	{
+		r_framedata.screendither = 0.f;
+		r_framedata.texturedither = 0.f;
+	}
 
 	Fog_SetupFrame (); //johnfitz
 	Sky_SetupFrame ();
@@ -945,13 +1011,15 @@ void R_SetupView (void)
 	if (r_waterwarp.value)
 	{
 		int contents = Mod_PointInLeaf (r_origin, cl.worldmodel)->contents;
-		if (contents == CONTENTS_WATER || contents == CONTENTS_SLIME || contents == CONTENTS_LAVA || cl.forceunderwater)
+		qboolean forced = M_ForcedUnderwater ();
+		if (contents == CONTENTS_WATER || contents == CONTENTS_SLIME || contents == CONTENTS_LAVA || cl.forceunderwater || forced)
 		{
+			double t = forced ? realtime : cl.time;
 			if (r_waterwarp.value > 1.f)
 			{
 				//variance is a percentage of width, where width = 2 * tan(fov / 2) otherwise the effect is too dramatic at high FOV and too subtle at low FOV.  what a mess!
-				r_fovx = atan(tan(DEG2RAD(r_refdef.fov_x) / 2) * (0.97 + sin(cl.time * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
-				r_fovy = atan(tan(DEG2RAD(r_refdef.fov_y) / 2) * (1.03 - sin(cl.time * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
+				r_fovx = atan(tan(DEG2RAD(r_refdef.fov_x) / 2) * (0.97 + sin(t * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
+				r_fovy = atan(tan(DEG2RAD(r_refdef.fov_y) / 2) * (1.03 - sin(t * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
 			}
 			else
 			{
@@ -1645,7 +1713,7 @@ static void R_BeginTranslucency (void)
 
 	GL_BeginGroup ("Translucent objects");
 
-	if (r_oit.value)
+	if (R_GetEffectiveAlphaMode () == ALPHAMODE_OIT)
 	{
 		GL_BindFramebufferFunc (GL_FRAMEBUFFER, framesetup.oit_fbo);
 		GL_ClearBufferfvFunc (GL_COLOR, 0, zeroes);
@@ -1665,7 +1733,7 @@ R_EndTranslucency
 */
 static void R_EndTranslucency (void)
 {
-	if (r_oit.value)
+	if (R_GetEffectiveAlphaMode () == ALPHAMODE_OIT)
 	{
 		GL_BeginGroup  ("OIT resolve");
 
@@ -1746,6 +1814,7 @@ void R_WarpScaleView (void)
 	qboolean msaa = framebufs.scene.samples > 1;
 	qboolean needwarpscale;
 	GLuint fbodest;
+	double t;
 
 	if (!GL_NeedsSceneEffects ())
 		return;
@@ -1791,7 +1860,8 @@ void R_WarpScaleView (void)
 	GL_UseProgram (glprogs.warpscale[water_warp]);
 	GL_SetState (GLS_BLEND_OPAQUE | GLS_NO_ZTEST | GLS_NO_ZWRITE | GLS_CULL_NONE | GLS_ATTRIBS(0));
 
-	GL_Uniform4fFunc (0, smax, tmax, water_warp ? 1.f/256.f : 0.f, cl.time);
+	t = M_ForcedUnderwater () ? realtime : cl.time;
+	GL_Uniform4fFunc (0, smax, tmax, water_warp ? 1.f/256.f : 0.f, (float)t);
 	if (v_blend[3] && gl_polyblend.value && !softemu)
 		GL_Uniform4fvFunc (1, 1, v_blend);
 	else

@@ -430,12 +430,14 @@ trace_t SV_PushEntity (edict_t *ent, vec3_t push)
 SV_PushMove
 ============
 */
+cvar_t sv_gameplayfix_elevators = {"sv_gameplayfix_elevators", "2", CVAR_ARCHIVE}; // 0=off; 1=clients only; 2=all entities
 void SV_PushMove (edict_t *pusher, float movetime)
 {
 	int			i, e;
 	edict_t		*check, *block;
 	vec3_t		mins, maxs, move;
 	vec3_t		entorig, pushorig;
+	float		solid_backup;
 	int			num_moved;
 	edict_t		**moved_edict; //johnfitz -- dynamically allocate
 	vec3_t		*moved_from; //johnfitz -- dynamically allocate
@@ -464,8 +466,8 @@ void SV_PushMove (edict_t *pusher, float movetime)
 
 	//johnfitz -- dynamically allocate
 	mark = Hunk_LowMark ();
-	moved_edict = (edict_t **) Hunk_Alloc (qcvm->num_edicts*sizeof(edict_t *));
-	moved_from = (vec3_t *) Hunk_Alloc (qcvm->num_edicts*sizeof(vec3_t));
+	moved_edict = (edict_t **) Hunk_AllocNoFill (qcvm->num_edicts*sizeof(edict_t *));
+	moved_from = (vec3_t *) Hunk_AllocNoFill (qcvm->num_edicts*sizeof(vec3_t));
 	//johnfitz
 
 // see if any solid entities are inside the final position
@@ -473,6 +475,7 @@ void SV_PushMove (edict_t *pusher, float movetime)
 	check = NEXT_EDICT(qcvm->edicts);
 	for (e=1 ; e<qcvm->num_edicts ; e++, check = NEXT_EDICT(check))
 	{
+		qboolean riding;
 		if (check->free)
 			continue;
 		if (check->v.movetype == MOVETYPE_PUSH
@@ -495,7 +498,11 @@ void SV_PushMove (edict_t *pusher, float movetime)
 		// see if the ent's bbox is inside the pusher's final position
 			if (!SV_TestEntityPosition (check))
 				continue;
+
+			riding = false;
 		}
+		else
+			riding = true;
 
 	// remove the onground flag for non-players
 		if (check->v.movetype != MOVETYPE_WALK)
@@ -507,9 +514,16 @@ void SV_PushMove (edict_t *pusher, float movetime)
 		num_moved++;
 
 		// try moving the contacted entity
-		pusher->v.solid = SOLID_NOT;
-		SV_PushEntity (check, move);
-		pusher->v.solid = SOLID_BSP;
+		// https://www.quake-info-pool.net/q1/qfix.htm#movetype_push
+		solid_backup = pusher->v.solid;
+		if (solid_backup == SOLID_BSP ||
+			solid_backup == SOLID_BBOX ||
+			solid_backup == SOLID_SLIDEBOX)
+		{
+			pusher->v.solid = SOLID_NOT;
+			SV_PushEntity (check, move);
+			pusher->v.solid = solid_backup;
+		}
 
 	// if it is still inside the pusher, block
 		block = SV_TestEntityPosition (check);
@@ -522,6 +536,35 @@ void SV_PushMove (edict_t *pusher, float movetime)
 				check->v.mins[0] = check->v.mins[1] = 0;
 				VectorCopy (check->v.mins, check->v.maxs);
 				continue;
+			}
+
+			// try moving the entity up a bit if it's blocked by the pusher while also standing on it
+			if (riding && block == pusher &&
+				(sv_gameplayfix_elevators.value >= 2.f ||
+				(sv_gameplayfix_elevators.value && e <= svs.maxclients)))
+			{
+				check->v.origin[2] += DIST_EPSILON;
+				if (!SV_TestEntityPosition (check))
+				{
+					// notify developer about potential issue
+					if (map_checks.value || developer.value)
+					{
+						vec3_t check_center, pusher_center;
+
+						VectorAdd (check->v.absmin, check->v.absmax, check_center);
+						VectorScale (check_center, 0.5f, check_center);
+						VectorAdd (pusher->v.absmin, pusher->v.absmax, pusher_center);
+						VectorScale (pusher_center, 0.5f, pusher_center);
+
+						Con_Warning ("sv_gameplayfix_elevators nudged %s #%d at (%.0f %.0f %.0f) above %s #%d at (%.0f %.0f %.0f)\n",
+							PR_GetString (check->v.classname), NUM_FOR_EDICT (check), check_center[0], check_center[1], check_center[2],
+							PR_GetString (pusher->v.classname), NUM_FOR_EDICT (pusher), pusher_center[0], pusher_center[1], pusher_center[2]
+						);
+					}
+
+					// move on to next entity
+					continue;
+				}
 			}
 
 			VectorCopy (entorig, check->v.origin);

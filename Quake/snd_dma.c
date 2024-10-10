@@ -78,7 +78,7 @@ cvar_t		sfxvolume = {"volume", "0.7", CVAR_ARCHIVE};
 cvar_t		precache = {"precache", "1", CVAR_NONE};
 cvar_t		loadas8bit = {"loadas8bit", "0", CVAR_NONE};
 
-cvar_t		sndspeed = {"sndspeed", "11025", CVAR_ARCHIVE};
+cvar_t		snd_filter = {"snd_filter", "0", CVAR_ARCHIVE};
 cvar_t		snd_mixspeed = {"snd_mixspeed", "44100", CVAR_NONE};
 
 cvar_t		snd_waterfx = {"snd_waterfx", "1", CVAR_ARCHIVE};
@@ -174,7 +174,7 @@ void S_Init (void)
 	Cvar_RegisterVariable(&snd_noextraupdate);
 	Cvar_RegisterVariable(&snd_show);
 	Cvar_RegisterVariable(&_snd_mixahead);
-	Cvar_RegisterVariable(&sndspeed);
+	Cvar_RegisterVariable(&snd_filter);
 	Cvar_RegisterVariable(&snd_mixspeed);
 	Cvar_RegisterVariable(&snd_filterquality);
 	Cvar_RegisterVariable(&snd_waterfx);
@@ -190,10 +190,10 @@ void S_Init (void)
 	Cmd_AddCommand("soundlist", S_SoundList);
 	Cmd_AddCommand("soundinfo", S_SoundInfo_f);
 
-	i = COM_CheckParm("-sndspeed");
+	i = COM_CheckParm("-snd_filter");
 	if (i && i < com_argc-1)
 	{
-		Cvar_SetQuick (&sndspeed, com_argv[i + 1]);
+		Cvar_SetQuick (&snd_filter, com_argv[i + 1]);
 	}
 
 	i = COM_CheckParm("-mixspeed");

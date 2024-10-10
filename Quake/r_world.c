@@ -308,7 +308,7 @@ static void R_AddBModelCall (int index, int first_instance, int num_instances, t
 		tx = fb = whitetexture;
 	}
 
-	if (!gl_zfix.value)
+	if (!gl_zfix.value || map_checks.value)
 		zfix = 0;
 
 	flags = zfix | ((fb != NULL) << 1) | ((r_fullbright_cheatsafe != false) << 2);
@@ -340,6 +340,37 @@ static void R_AddBModelCall (int index, int first_instance, int num_instances, t
 	bmodel_call_remap[num_bmodel_calls].inst = first_instance * MAX_BMODEL_INSTANCES + (num_instances - 1);
 
 	++num_bmodel_calls;
+}
+
+/*
+=============
+R_ChooseBModelProgram
+=============
+*/
+static GLuint R_ChooseBModelProgram (qboolean oit, qboolean alphatest)
+{
+	extern cvar_t r_softemu_lightmap_banding;
+
+	switch (softemu)
+	{
+	case SOFTEMU_BANDED:
+		if (r_softemu_lightmap_banding.value != 0.f)
+			return glprogs.world[oit][2][alphatest];
+		else
+			return glprogs.world[oit][1][alphatest];
+
+	case SOFTEMU_COARSE:
+		if (r_softemu_lightmap_banding.value > 0.f)
+			return glprogs.world[oit][2][alphatest];
+		else
+			return glprogs.world[oit][1][alphatest];
+
+	default:
+		if (r_softemu_lightmap_banding.value > 0.f)
+			return glprogs.world[oit][2][alphatest];
+		else
+			return glprogs.world[oit][0][alphatest];
+	}
 }
 
 typedef enum {
@@ -376,19 +407,19 @@ static void R_DrawBrushModels_Real (entity_t **ents, int count, brushpass_t pass
 		count = countof(bmodel_instances);
 	}
 
-	oit = translucent && r_oit.value != 0.f;
+	oit = translucent && R_GetEffectiveAlphaMode () == ALPHAMODE_OIT;
 	switch (pass)
 	{
 	default:
 	case BP_SOLID:
 		texbegin = 0;
 		texend = TEXTYPE_CUTOUT;
-		program = glprogs.world[oit][q_max(0, (int)softemu - 1)][WORLDSHADER_SOLID];
+		program = R_ChooseBModelProgram (oit, false);
 		break;
 	case BP_ALPHATEST:
 		texbegin = TEXTYPE_CUTOUT;
 		texend = TEXTYPE_CUTOUT + 1;
-		program = glprogs.world[oit][q_max(0, (int)softemu - 1)][WORLDSHADER_ALPHATEST];
+		program = R_ChooseBModelProgram (oit, true);
 		break;
 	case BP_SKYLAYERS:
 		texbegin = TEXTYPE_SKY;
@@ -444,6 +475,8 @@ static void R_DrawBrushModels_Real (entity_t **ents, int count, brushpass_t pass
 		entity_t *e = ents[i++];
 		qmodel_t *model = e->model;
 		qboolean isworld = (e == &cl_entities[0]);
+		qboolean isstatic = PTR_IN_RANGE (e, cl_static_entities, cl_static_entities + MAX_STATIC_ENTITIES);
+		qboolean zfix = !isworld && !isstatic;
 		int frame = isworld ? 0 : e->frame;
 		int numtex = model->texofs[texend] - model->texofs[texbegin];
 
@@ -456,7 +489,7 @@ static void R_DrawBrushModels_Real (entity_t **ents, int count, brushpass_t pass
 		for (j = model->texofs[texbegin]; j < model->texofs[texend]; j++)
 		{
 			texture_t *t = model->textures[model->usedtextures[j]];
-			R_AddBModelCall (model->firstcmd + j, baseinst, numinst, pass != BP_SHOWTRIS ? R_TextureAnimation (t, frame) : 0, !isworld);
+			R_AddBModelCall (model->firstcmd + j, baseinst, numinst, pass != BP_SHOWTRIS ? R_TextureAnimation (t, frame) : 0, zfix);
 		}
 
 		baseinst += numinst;
@@ -519,7 +552,7 @@ void R_DrawBrushModels_Water (entity_t **ents, int count, qboolean translucent)
 	else
 		state |= GLS_BLEND_OPAQUE;
 
-	oit = translucent && r_oit.value != 0.f;
+	oit = translucent && R_GetEffectiveAlphaMode () == ALPHAMODE_OIT;
 	if (cl.worldmodel->haslitwater && r_litwater.value)
 		program = glprogs.world[oit][q_max(0, (int)softemu - 1)][WORLDSHADER_WATER];
 	else
@@ -630,7 +663,7 @@ void R_DrawBrushModels (entity_t **ents, int count)
 	if (!count)
 		return;
 	translucent = (ents[0] != &cl_entities[0]) && !ENTALPHA_OPAQUE (ents[0]->alpha);
-	if (!translucent || r_oit.value)
+	if (!translucent || R_GetEffectiveAlphaMode () == ALPHAMODE_OIT)
 	{
 		R_DrawBrushModels_Real (ents, count, BP_SOLID, translucent);
 		R_DrawBrushModels_Real (ents, count, BP_ALPHATEST, translucent);

@@ -103,6 +103,9 @@ extern	cvar_t	r_dynamic;
 extern	cvar_t	r_novis;
 extern	cvar_t	r_scale;
 
+extern	cvar_t	r_oit;
+extern	cvar_t	r_alphasort;
+
 extern	cvar_t	gl_clear;
 extern	cvar_t	gl_polyblend;
 extern	cvar_t	gl_nocolors;
@@ -308,12 +311,26 @@ extern	qboolean	gl_anisotropy_able;
 #define OFFSET_SHOWTRIS -3
 void GL_PolygonOffset (int);
 
-typedef enum {
+typedef enum
+{
 	ZRANGE_FULL,
 	ZRANGE_VIEWMODEL,
 	ZRANGE_NEAR,
 } zrange_t;
 void GL_DepthRange (zrange_t range);
+
+typedef enum
+{
+	ALPHAMODE_BASIC,
+	ALPHAMODE_SORTED,
+	ALPHAMODE_OIT,
+
+	ALPHAMODE_COUNT
+} alphamode_t;
+
+alphamode_t R_GetAlphaMode (void);
+alphamode_t R_GetEffectiveAlphaMode (void);
+void R_SetAlphaMode (alphamode_t mode);
 
 //johnfitz -- rendering statistics
 extern int rs_brushpolys, rs_aliaspolys, rs_skypolys;
@@ -403,12 +420,15 @@ typedef struct gpuframedata_s {
 	float	skyfogdata[4];
 	vec3_t	winddir;
 	float	windphase;
+	float	screendither;
+	float	texturedither;
+	float	_padding1[2];
 	vec3_t	eyepos;
 	float	time;
 	float	zlogscale;
 	float	zlogbias;
 	int		numlights;
-	int		padding;
+	int		_padding2;
 } gpuframedata_t;
 
 extern gpulightbuffer_t r_lightbuffer;
@@ -500,7 +520,7 @@ typedef struct glprogs_s {
 	GLuint		oit_resolve[2];		// [msaa]
 
 	/* 3d */
-	GLuint		world[2][3][3];		// [OIT][dither][mode:solid/alpha test/water]
+	GLuint		world[2][3][3];		// [OIT][standard/dithered/banded][solid/alpha test/water]
 	GLuint		water[2][2];		// [OIT][dither]
 	GLuint		skystencil;
 	GLuint		skylayers[2];		// [dither]

@@ -381,36 +381,6 @@ static void Con_SetHotLink (conlink_t *link)
 
 /*
 ================
-Con_GetMousePos
-
-Computes the console offset corresponding to the current mouse position
-Returns true if the offset is inside the visible portion of the console
-================
-*/
-static qboolean Con_GetMousePos (conofs_t *ofs, contest_t testmode)
-{
-	int x, y;
-	SDL_GetMouseState (&x, &y);
-	return Con_ScreenToOffset (x, y, ofs, testmode);
-}
-
-/*
-================
-Con_GetMouseLink
-
-Returns the link at the current mouse position, if any, or NULL otherwise
-================
-*/
-static conlink_t *Con_GetMouseLink (void)
-{
-	conofs_t ofs;
-	if (Con_GetMousePos (&ofs, CT_INSIDE))
-		return Con_GetLinkAtOfs (&ofs);
-	return NULL;
-}
-
-/*
-================
 Con_ClearSelection
 ================
 */
@@ -634,8 +604,10 @@ void Con_Mousemove (int x, int y)
 {
 	if (con_mousestate == CMS_NOTPRESSED)
 	{
+		conofs_t ofs;
+		qboolean inside = Con_ScreenToOffset (x, y, &ofs, CT_INSIDE);
 		Con_SetHotLink (Con_GetLinkAtPixel (x, y));
-		VID_SetMouseCursor (con_hotlink ? MOUSECURSOR_HAND : MOUSECURSOR_DEFAULT);
+		VID_SetMouseCursor (con_hotlink ? MOUSECURSOR_HAND : inside ? MOUSECURSOR_IBEAM : MOUSECURSOR_DEFAULT);
 	}
 	else
 	{
@@ -1080,7 +1052,7 @@ void Con_Init (void)
 		con_buffersize = CON_TEXTSIZE;
 	//johnfitz
 
-	con_text = (char *) Hunk_AllocName (con_buffersize, "context");//johnfitz -- con_buffersize replaces CON_TEXTSIZE
+	con_text = (char *) Hunk_AllocNameNoFill (con_buffersize, "context");//johnfitz -- con_buffersize replaces CON_TEXTSIZE
 	Q_memset (con_text, ' ', con_buffersize);//johnfitz -- con_buffersize replaces CON_TEXTSIZE
 	con_linewidth = -1;
 
@@ -1598,7 +1570,7 @@ void Con_AddToTabList (const char *name, const char *partial, const char *type)
 	tab_t	*t,*insert;
 	char	*i_bash, *i_bash2;
 	const char *i_name, *i_name2;
-	int		len, mark;
+	int		namelen, typelen, mark;
 
 	if (!Con_Match (name, partial))
 		return;
@@ -1638,11 +1610,16 @@ void Con_AddToTabList (const char *name, const char *partial, const char *type)
 	}
 
 	mark = Hunk_LowMark ();
-	len = strlen (name);
-	t = (tab_t *) Hunk_AllocName (sizeof (tab_t) + len + 1, "tablist");
-	memcpy (t + 1, name, len + 1);
+	namelen = (int) strlen (name) + 1;
+	typelen = type ? (int) strlen (type) + 1 : 0;
+	t = (tab_t *) Hunk_AllocName (sizeof (tab_t) + namelen + typelen, "tablist");
 	t->name = (const char *) (t + 1);
-	t->type = type;
+	memcpy ((char *) t->name, name, namelen);
+	if (type)
+	{
+		t->type = t->name + namelen;
+		memcpy ((char *) t->type, type, typelen);
+	}
 	t->count = 1;
 
 	if (!tablist) //create list
@@ -1753,6 +1730,13 @@ static qboolean CompleteFileList (const char *partial, void *param)
 	return true;
 }
 
+static qboolean CompleteFileListSingle (const char *partial, void *param)
+{
+	if (Cmd_Argc () < 3)
+		CompleteFileList (partial, param);
+	return true;
+}
+
 static qboolean CompleteClassnames (const char *partial, void *unused)
 {
 	extern edict_t *sv_player;
@@ -1783,6 +1767,7 @@ static qboolean CompleteBindKeys (const char *partial, void *unused)
 {
 	int i;
 
+	// fall back to default tab completion after 1st arg (key name)
 	if (Cmd_Argc () > 2)
 		return false;
 
@@ -1799,6 +1784,10 @@ static qboolean CompleteBindKeys (const char *partial, void *unused)
 static qboolean CompleteUnbindKeys (const char *partial, void *unused)
 {
 	int i;
+
+	// disable completion after 1st arg (key name)
+	if (Cmd_Argc () > 2)
+		return true;
 
 	for (i = 0; i < MAX_KEYS; i++)
 	{
@@ -1822,15 +1811,15 @@ typedef struct arg_completion_type_s
 
 static const arg_completion_type_t arg_completion_types[] =
 {
-	{ "map",					CompleteFileList,		&extralevels },
-	{ "changelevel",			CompleteFileList,		&extralevels },
+	{ "map",					CompleteFileListSingle,	&extralevels },
+	{ "changelevel",			CompleteFileListSingle,	&extralevels },
 	{ "game",					CompleteFileList,		&modlist },
-	{ "record",					CompleteFileList,		&demolist },
-	{ "playdemo",				CompleteFileList,		&demolist },
-	{ "timedemo",				CompleteFileList,		&demolist },
-	{ "load",					CompleteFileList,		&savelist },
-	{ "save",					CompleteFileList,		&savelist },
-	{ "sky",					CompleteFileList,		&skylist },
+	{ "record",					CompleteFileListSingle,	&demolist },
+	{ "playdemo",				CompleteFileListSingle,	&demolist },
+	{ "timedemo",				CompleteFileListSingle,	&demolist },
+	{ "load",					CompleteFileListSingle,	&savelist },
+	{ "save",					CompleteFileListSingle,	&savelist },
+	{ "sky",					CompleteFileListSingle,	&skylist },
 	{ "r_showbboxes_filter",	CompleteClassnames,		NULL },
 	{ "bind",					CompleteBindKeys,		NULL },
 	{ "unbind",					CompleteUnbindKeys,		NULL },
@@ -2271,7 +2260,7 @@ void Con_DrawInput (void)
 Con_DrawSelectionHighlight
 ================
 */
-void Con_DrawSelectionHighlight (int x, int y, int line)
+static void Con_DrawSelectionHighlight (int x, int y, int line, float alpha)
 {
 	conofs_t	selbegin, selend;
 	conofs_t	begin, end;
@@ -2296,7 +2285,7 @@ void Con_DrawSelectionHighlight (int x, int y, int line)
 	if (!Con_IntersectRanges (&begin, &end, &selbegin, &selend))
 		return;
 
-	Draw_Fill (x + begin.col*8, y, (end.col-begin.col)*8, 8, 220, 1.f);
+	Draw_Fill (x + begin.col*8, y, (end.col-begin.col)*8, 8, 220, alpha);
 }
 
 /*
@@ -2307,10 +2296,12 @@ Draws the console with the solid background
 The typing input line at the bottom should only be drawn if typing is allowed
 ================
 */
-void Con_DrawConsole (int lines, qboolean drawinput)
+void Con_DrawConsole (int lines, qboolean drawbg, qboolean drawinput)
 {
 	int	i, x, y, j, sb, rows;
 	const char	*text;
+	qboolean forced;
+	float alpha;
 
 	Con_UpdateMouseState ();
 
@@ -2321,7 +2312,14 @@ void Con_DrawConsole (int lines, qboolean drawinput)
 	GL_SetCanvas (CANVAS_CONSOLE);
 
 // draw the background
-	Draw_ConsoleBackground ();
+	if (drawbg)
+		Draw_ConsoleBackground ();
+
+// fade out during live previews for console options when there's no active game
+	forced = con_forcedup && M_WantsConsole (&alpha);
+	if (!forced)
+		alpha = 1.f;
+	GL_PushCanvasColor (1.f, 1.f, 1.f, alpha);
 
 // draw the buffer text
 	rows = (con_vislines +7)/8;
@@ -2335,7 +2333,7 @@ void Con_DrawConsole (int lines, qboolean drawinput)
 		if (j < 0)
 			j = 0;
 		text = con_text + (j % con_totallines)*con_linewidth;
-		Con_DrawSelectionHighlight (8, y, j);
+		Con_DrawSelectionHighlight (8, y, j, alpha);
 	}
 
 	y = vid.conheight - (rows+2)*8; // +2 for input and version lines
@@ -2375,9 +2373,10 @@ void Con_DrawConsole (int lines, qboolean drawinput)
 		Con_DrawInput ();
 
 //draw version number in bottom right
-	y += 8;
 	text = CONSOLE_TITLE_STRING;
-	M_PrintWhite (vid.conwidth - (strlen (text) << 3), y, text);
+	M_PrintWhite (vid.conwidth - (strlen (text) << 3), vid.conheight - 8, text);
+
+	GL_PopCanvasColor ();
 }
 
 

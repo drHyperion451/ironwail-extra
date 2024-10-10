@@ -762,7 +762,7 @@ void GL_BuildBModelMarkBuffers (void)
 		numtex += m->texofs[TEXTYPE_COUNT];
 		maxnumtex = q_max (maxnumtex, m->numtextures);
 		for (i = 0; i < m->nummodelsurfaces; i++)
-			numtris += m->surfaces[i + m->firstmodelsurface].numedges - 2;
+			numtris += q_max (m->surfaces[i + m->firstmodelsurface].numedges, 2) - 2;
 	}
 
 	// allocate cpu-side buffers
@@ -831,7 +831,7 @@ void GL_BuildBModelMarkBuffers (void)
 			texidx[m->usedtextures[i]] = i;
 
 		for (i = 0, s = m->surfaces + m->firstmodelsurface; i < m->nummodelsurfaces; i++, s++)
-			cmds[m->firstcmd + texidx[s->texinfo->texnum]].count += (s->numedges - 2) * 3;
+			cmds[m->firstcmd + texidx[s->texinfo->texnum]].count += (q_max (s->numedges, 2) - 2) * 3;
 	}
 
 	// compute per-drawcall index buffer offsets

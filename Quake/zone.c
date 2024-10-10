@@ -295,18 +295,25 @@ typedef struct
 
 typedef struct hunkseg_s
 {
-	struct hunkseg_s	*next;
 	int					base;
 	int					size;
 	int					used;
+	int					pad; // pad to power of 2
 } hunkseg_t;
 
+#define MAX_SEGMENTS	8
 #define SEG_MEM(seg)	((byte *) ((seg) + 1))
-
-static hunkseg_t		*hunk_firstseg;
-static hunkseg_t		*hunk_lastseg;
+#define LASTSEG			(hunk_segments[hunk_numsegments-1])
 
 static int				hunk_low_used;
+static int				hunk_numsegments;
+static hunkseg_t		*hunk_segments[MAX_SEGMENTS];
+
+typedef enum
+{
+	HF_UNINIT			= 0,
+	HF_CLEAR			= 1 << 0,
+} hunkflags_t;
 
 
 /*
@@ -316,7 +323,18 @@ Hunk_Size
 */
 static int Hunk_Size (void)
 {
-	return hunk_lastseg->base + hunk_lastseg->size;
+	return LASTSEG->base + LASTSEG->size;
+}
+
+
+/*
+===================
+Hunk_GetName
+===================
+*/
+static const char *Hunk_GetName (const hunk_t *hunk)
+{
+	return hunk->name[0] ? hunk->name : "unknown";
 }
 
 /*
@@ -328,14 +346,14 @@ Run consistency and sentinel trashing checks
 */
 void Hunk_Check (void)
 {
-	hunkseg_t	*seg;
-	int			ofs;
+	int i, ofs;
 
-	for (seg = hunk_firstseg; seg && seg->base < hunk_low_used; seg = seg->next)
+	for (i = 0; i < hunk_numsegments && hunk_segments[i]->base < hunk_low_used; i++)
 	{
+		const hunkseg_t *seg = hunk_segments[i];
 		for (ofs = 0; ofs < seg->used; )
 		{
-			hunk_t *h = (hunk_t *) (SEG_MEM (seg) + ofs);
+			const hunk_t *h = (const hunk_t *) (SEG_MEM (seg) + ofs);
 			if (h->sentinel != HUNK_SENTINEL)
 				Sys_Error ("Hunk_Check: trashed sentinel");
 			if (h->size < (int) sizeof(hunk_t) || h->size + ofs > seg->size)
@@ -355,10 +373,7 @@ Otherwise, allocations with the same name will be totaled up before printing.
 */
 void Hunk_Print (qboolean all)
 {
-	hunkseg_t	*seg;
-	hunk_t		*h, *next;
-	int			count, sum, numseg;
-	int			totalblocks;
+	int i, count, sum, totalblocks;
 
 	count = 0;
 	sum = 0;
@@ -367,14 +382,14 @@ void Hunk_Print (qboolean all)
 	Con_SafePrintf ("\n");
 
 	// print segments if more than 1
-	if (hunk_firstseg->next)
+	if (hunk_numsegments > 1)
 	{
 		Con_SafePrintf ("             Segments\n");
 		Con_SafePrintf ("---------------------------------\n");
 		Con_SafePrintf ("id :     offset :       size\n");
 		Con_SafePrintf ("---------------------------------\n");
-		for (numseg = 0, seg = hunk_firstseg; seg; seg = seg->next, numseg++)
-			Con_SafePrintf ("%2i : %10i : %10i\n", numseg, seg->base, seg->size);
+		for (i = 0; i < hunk_numsegments; i++)
+			Con_SafePrintf ("%2i : %10i : %10i\n", i, hunk_segments[i]->base, hunk_segments[i]->size);
 		Con_SafePrintf ("---------------------------------\n");
 		Con_SafePrintf ("\n");
 		Con_SafePrintf ("           Allocations\n");
@@ -387,22 +402,25 @@ void Hunk_Print (qboolean all)
 		Con_SafePrintf ("allocs :       size : name\n");
 	Con_SafePrintf ("---------------------------------\n");
 
-	for (numseg = 0, seg = hunk_firstseg; seg; seg = seg->next, numseg++)
+	for (i = 0; i < hunk_numsegments; i++)
 	{
+		const hunkseg_t *seg = hunk_segments[i];
 		if (seg->base < hunk_low_used)
 		{
 			int ofs;
 
 			for (ofs = 0; ofs < seg->used; )
 			{
-				h = (hunk_t *) (SEG_MEM (seg) + ofs);
+				const hunk_t *h, *next;
+
+				h = (const hunk_t *) (SEG_MEM (seg) + ofs);
 
 				// if this is the last block in the segment, then the next block is either
 				// the first block of the next segment, or NULL if this is the last segment
 				if (ofs + h->size == seg->used)
-					next = seg->next ? (hunk_t *) SEG_MEM (seg->next) : NULL;
+					next = i != hunk_numsegments - 1 ? (const hunk_t *) SEG_MEM (hunk_segments[i + 1]) : NULL;
 				else // at least 1 more block in the current segment
-					next = (hunk_t *) ((byte *)h + h->size);
+					next = (const hunk_t *) ((byte *)h + h->size);
 
 				//
 				// run consistency checks
@@ -420,15 +438,15 @@ void Hunk_Print (qboolean all)
 				// print the single block
 				//
 				if (all)
-					Con_SafePrintf ("%10i : %10i : %s\n", seg->base + ofs, h->size, h->name);
+					Con_SafePrintf ("%10i : %10i : %s\n", seg->base + ofs, h->size, Hunk_GetName (h));
 
 				//
 				// print the total
 				//
-				if (!next || strncmp (h->name, next->name, HUNKNAME_LEN - 1) != 0)
+				if (!next || strncmp (Hunk_GetName (h), Hunk_GetName (next), HUNKNAME_LEN - 1) != 0)
 				{
 					if (!all)
-						Con_SafePrintf ("%6i : %10i : %s\n", count, sum, h->name);
+						Con_SafePrintf ("%6i : %10i : %s\n", count, sum, Hunk_GetName (h));
 					count = 0;
 					sum = 0;
 				}
@@ -469,17 +487,20 @@ void Hunk_Print_f (void)
 Hunk_SegForOfs
 ===================
 */
-static hunkseg_t *Hunk_SegForOfs (int ofs)
+static int Hunk_SegForOfs (int ofs)
 {
-	hunkseg_t *seg;
+	int i;
 
-	for (seg = hunk_firstseg; seg; seg = seg->next)
+	for (i = hunk_numsegments - 1; i >= 0; i--)
+	{
+		const hunkseg_t *seg = hunk_segments[i];
 		if (seg->base <= ofs && ofs < seg->base + seg->size)
-			return seg;
+			return i;
+	}
 
 	Sys_Error ("Hunk_SegForOfs: bad offset %d (max: %d)", ofs, Hunk_Size ());
 
-	return NULL;
+	return -1;
 }
 
 /*
@@ -487,33 +508,35 @@ static hunkseg_t *Hunk_SegForOfs (int ofs)
 Hunk_SegForPtr
 ===================
 */
-static hunkseg_t *Hunk_SegForPtr (const void *ptr)
+static int Hunk_SegForPtr (const void *ptr)
 {
-	hunkseg_t *seg;
+	int i;
 
-	for (seg = hunk_firstseg; seg; seg = seg->next)
+	for (i = hunk_numsegments - 1; i >= 0; i--)
 	{
+		const hunkseg_t *seg = hunk_segments[i];
 		const byte *begin = SEG_MEM (seg);
 		const byte *end = begin + seg->size;
 		if (PTR_IN_RANGE (ptr, begin, end))
-			return seg;
+			return i;
 	}
 
 	Sys_Error ("Hunk_SegForPtr: bad pointer");
 
-	return NULL;
+	return -1;
 }
 
 
 /*
 ===================
-Hunk_AllocName
+Hunk_AllocInternal
 ===================
 */
-void *Hunk_AllocName (int size, const char *name)
+static void *Hunk_AllocInternal (int size, const char *name, hunkflags_t flags)
 {
 	hunkseg_t	*seg;
 	hunk_t		*h;
+	int			i;
 
 #ifdef PARANOID
 	Hunk_Check ();
@@ -527,26 +550,27 @@ void *Hunk_AllocName (int size, const char *name)
 
 	size = sizeof(hunk_t) + ((size+15)&~15);
 
-	seg = Hunk_SegForOfs (hunk_low_used);
+	i = Hunk_SegForOfs (hunk_low_used);
 
 	// skip segments that can't handle this request (adjusting hunk_low_used)
-	while (seg && (hunk_low_used - seg->base) + size > seg->size)
+	while (i < hunk_numsegments && (hunk_low_used - hunk_segments[i]->base) + size > hunk_segments[i]->size)
 	{
-		seg = seg->next;
-		if (!seg)
-			break;
-		hunk_low_used = seg->base;
+		hunk_low_used = hunk_segments[i]->base + hunk_segments[i]->size;
+		i++;
 	}
 
 	// add new segment if we've reached the end
-	if (!seg)
+	if (i == hunk_numsegments)
 	{
 		int newbase, newsize;
 
+		if (hunk_numsegments == MAX_SEGMENTS)
+			Sys_Error ("Hunk_Alloc: segment overflow");
+
 		Cache_Flush ();
 
-		newbase = hunk_lastseg->base + hunk_lastseg->size;
-		newsize = hunk_lastseg->size * 2;
+		newbase = LASTSEG->base + LASTSEG->size;
+		newsize = LASTSEG->size * 2;
 		newsize = q_max (newsize, size);
 
 		Sys_Printf ("Allocating new hunk segment: %.2lf MiB\n", newsize / 1048576.0);
@@ -560,27 +584,50 @@ void *Hunk_AllocName (int size, const char *name)
 
 		seg->base = newbase;
 		seg->size = newsize;
-		seg->next = NULL;
 		seg->used = 0;
 
-		hunk_lastseg->next = seg;
-		hunk_lastseg = seg;
-		hunk_low_used = hunk_lastseg->base;
+		hunk_segments[hunk_numsegments++] = seg;
+		hunk_low_used = seg->base;
 	}
 
+	seg = hunk_segments[i];
 	h = (hunk_t *) (SEG_MEM (seg) + hunk_low_used - seg->base);
 	hunk_low_used += size;
 	seg->used = hunk_low_used - seg->base;
 
 	Cache_FreeLow (hunk_low_used);
 
-	memset (h, 0, size);
+	if (flags & HF_CLEAR)
+		memset (h, 0, size);
 
 	h->size = size;
 	h->sentinel = HUNK_SENTINEL;
-	q_strlcpy (h->name, name, HUNKNAME_LEN);
+	if (name)
+		q_strlcpy (h->name, name, HUNKNAME_LEN);
+	else
+		h->name[0] = '\0';
 
 	return (void *)(h+1);
+}
+
+/*
+===================
+Hunk_AllocName
+===================
+*/
+void *Hunk_AllocName (int size, const char *name)
+{
+	return Hunk_AllocInternal (size, name, HF_CLEAR);
+}
+
+/*
+===================
+Hunk_AllocNameNoFill
+===================
+*/
+void *Hunk_AllocNameNoFill (int size, const char *name)
+{
+	return Hunk_AllocInternal (size, name, HF_UNINIT);
 }
 
 /*
@@ -590,7 +637,17 @@ Hunk_Alloc
 */
 void *Hunk_Alloc (int size)
 {
-	return Hunk_AllocName (size, "unknown");
+	return Hunk_AllocName (size, NULL);
+}
+
+/*
+===================
+Hunk_AllocNoFill
+===================
+*/
+void *Hunk_AllocNoFill (int size)
+{
+	return Hunk_AllocNameNoFill (size, NULL);
 }
 
 int	Hunk_LowMark (void)
@@ -600,14 +657,14 @@ int	Hunk_LowMark (void)
 
 void Hunk_FreeToLowMark (int mark)
 {
-	hunkseg_t *seg;
+	int i;
 
 	if (mark < 0 || mark > hunk_low_used)
 		Sys_Error ("Hunk_FreeToLowMark: bad mark %i", mark);
 
 	hunk_low_used = mark;
-	for (seg = Hunk_SegForOfs (hunk_low_used); seg; seg = seg->next)
-		seg->used = q_max (0, hunk_low_used - seg->base);
+	for (i = Hunk_SegForOfs (hunk_low_used); i < hunk_numsegments; i++)
+		hunk_segments[i]->used = q_max (0, hunk_low_used - hunk_segments[i]->base);
 }
 
 char *Hunk_Strdup (const char *s, const char *name)
@@ -683,14 +740,14 @@ void Cache_FreeLow (int new_low_hunk)
 	int				ofs;
 
 	// can only allocate space in the last segment
-	new_low_hunk = q_max (new_low_hunk, hunk_lastseg->base);
+	new_low_hunk = q_max (new_low_hunk, LASTSEG->base);
 
 	while (1)
 	{
 		c = cache_head.next;
 		if (c == &cache_head)
 			return;		// nothing in cache at all
-		seg = Hunk_SegForPtr (c);
+		seg = hunk_segments[Hunk_SegForPtr (c)];
 		ofs = (byte *) (c) - SEG_MEM (seg);
 		if (ofs + seg->base >= new_low_hunk)
 			return;		// there is space to grow the hunk
@@ -731,15 +788,15 @@ Size should already include the header and padding
 cache_system_t *Cache_TryAlloc (int size, qboolean nobottom)
 {
 	cache_system_t	*cs, *new_cs;
-	int ofs = q_max (hunk_low_used, hunk_lastseg->base);
+	int ofs = q_max (hunk_low_used, LASTSEG->base);
 
 // is the cache completely empty?
 	if (!nobottom && cache_head.prev == &cache_head)
 	{
-		if ((ofs - hunk_lastseg->base) + size > hunk_lastseg->size)
+		if ((ofs - LASTSEG->base) + size > LASTSEG->size)
 			Sys_Error ("Cache_TryAlloc: %i is greater then free hunk", size);
 
-		new_cs = (cache_system_t *) (SEG_MEM (hunk_lastseg) + ofs - hunk_lastseg->base);
+		new_cs = (cache_system_t *) (SEG_MEM (LASTSEG) + ofs - LASTSEG->base);
 		memset (new_cs, 0, sizeof(*new_cs));
 		new_cs->size = size;
 
@@ -752,7 +809,7 @@ cache_system_t *Cache_TryAlloc (int size, qboolean nobottom)
 
 // search from the bottom up for space
 
-	new_cs = (cache_system_t *) (SEG_MEM (hunk_lastseg) + ofs - hunk_lastseg->base);
+	new_cs = (cache_system_t *) (SEG_MEM (LASTSEG) + ofs - LASTSEG->base);
 	cs = cache_head.next;
 
 	do
@@ -782,7 +839,7 @@ cache_system_t *Cache_TryAlloc (int size, qboolean nobottom)
 	} while (cs != &cache_head);
 
 // try to allocate one at the very end
-	if ((byte *)new_cs - SEG_MEM (hunk_lastseg) + size <= hunk_lastseg->size)
+	if ((byte *)new_cs - SEG_MEM (LASTSEG) + size <= LASTSEG->size)
 	{
 		memset (new_cs, 0, sizeof(*new_cs));
 		new_cs->size = size;
@@ -980,11 +1037,10 @@ void Memory_Init (void *buf, int size)
 	int p;
 	int zonesize = DYNAMIC_SIZE;
 
-	hunk_firstseg = (hunkseg_t *) buf;
-	hunk_firstseg->next = NULL;
-	hunk_firstseg->base = 0;
-	hunk_firstseg->size = size - sizeof (hunkseg_t);
-	hunk_lastseg = hunk_firstseg;
+	hunk_segments[0] = (hunkseg_t *) buf;
+	hunk_segments[0]->base = 0;
+	hunk_segments[0]->size = size - sizeof (hunkseg_t);
+	hunk_numsegments = 1;
 	hunk_low_used = 0;
 
 	Cache_Init ();

@@ -36,6 +36,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #  pragma warning(disable:4267)
 	/* 'var'	: conversion from 'size_t' to 'type',
 			  possible loss of data (/Wp64 warning) */
+#  pragma warning(error:4431)
+	/* missing type specifier - int assumed */
 #endif	/* _MSC_VER */
 #endif	/* _WIN32 */
 
@@ -161,6 +163,7 @@ typedef struct vec_header_t {
 #define VEC_POP(v)				do { SDL_assert(v && VEC_HEADER(v).size >= 1); VEC_HEADER(v).size--; } while (0)
 #define VEC_POP_N(v,n)			do { SDL_assert(v && VEC_HEADER(v).size >= (n)); VEC_HEADER(v).size -= (n); } while (0)
 #define VEC_SIZE(v)				((v) ? VEC_HEADER(v).size : 0)
+#define VEC_LAST(v)				((v)[VEC_SIZE(v)-1])
 #define VEC_FREE(v)				Vec_Free((void**)&(v))
 #define VEC_CLEAR(v)			Vec_Clear((void**)&(v))
 
@@ -274,7 +277,7 @@ extern char *q_strupr (char *str);
 extern int q_snprintf (char *str, size_t size, const char *format, ...) FUNC_PRINTF(3,4);
 extern int q_vsnprintf(char *str, size_t size, const char *format, va_list args) FUNC_PRINTF(3,0);
 
-#define PLURAL(count)	((int)(count)), (&"s"[((int)(count))==1])
+#define PLURAL(count)	((int)(count)), ((int)(count) == 1 ? "" : "s")
 
 //============================================================================
 
@@ -312,6 +315,7 @@ void COM_AddGameDirectory (const char *dir);
 void COM_SwitchGame (const char *paths);
 
 const char *COM_SkipPath (const char *pathname);
+const char *COM_SkipSpace (const char *str);
 void COM_StripExtension (const char *in, char *out, size_t outsize);
 void COM_FileBase (const char *in, char *out, size_t outsize);
 void COM_AddExtension (char *path, const char *extension, size_t len);
@@ -353,6 +357,8 @@ size_t UTF8_ToQuake (char *dst, size_t maxbytes, const char *src);
 #define UNICODE_MAX			0x10FFFF
 
 #define QCHAR_BOX			11
+#define QCHAR_COLOR_MASK	((char)0x80)
+#define QCHAR_COLORED(x)	((char)((x) | QCHAR_COLOR_MASK))
 
 //============================================================================
 

@@ -33,17 +33,6 @@ m*_t structures are in-memory
 
 */
 
-// entity effects
-
-#define	EF_BRIGHTFIELD			1
-#define	EF_MUZZLEFLASH 			2
-#define	EF_BRIGHTLIGHT 			4
-#define	EF_DIMLIGHT 			8
-#define EF_QEX_QUADLIGHT		16	// 2021 rerelease
-#define EF_QEX_PENTALIGHT		32	// 2021 rerelease
-#define EF_QEX_CANDLELIGHT		64	// 2021 rerelease
-
-
 /*
 ==============================================================================
 
@@ -129,7 +118,6 @@ typedef struct texture_s
 typedef struct
 {
 	unsigned int	v[2];
-	unsigned int	cachededgeoffset;
 } medge_t;
 
 typedef struct

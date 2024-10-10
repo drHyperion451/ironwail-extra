@@ -110,6 +110,8 @@ void S_BeginPrecaching (void);
 void S_EndPrecaching (void);
 void S_PaintChannels (int endtime);
 void S_InitPaintChannels (void);
+float S_GetLoFreqLevel (void);
+float S_GetHiFreqLevel (void);
 
 /* picks a channel based on priorities, empty slots, number of channels */
 channel_t *SND_PickChannel (int entnum, int entchannel);
@@ -168,7 +170,7 @@ extern	vec3_t		listener_forward;
 extern	vec3_t		listener_right;
 extern	vec3_t		listener_up;
 
-extern	cvar_t		sndspeed;
+extern	cvar_t		snd_filter;
 extern	cvar_t		snd_mixspeed;
 extern	cvar_t		snd_filterquality;
 extern	cvar_t		sfxvolume;
