@@ -154,6 +154,8 @@ void SV_Init (void)
 	extern	cvar_t	sv_autoload;
 	extern	cvar_t	sv_autosave;
 	extern	cvar_t	sv_autosave_interval;
+	extern  cvar_t	sv_pogo;
+
 
 	Cvar_RegisterVariable (&sv_maxvelocity);
 	Cvar_RegisterVariable (&sv_gravity);
@@ -177,6 +179,8 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_autoload);
 	Cvar_RegisterVariable (&sv_autosave);
 	Cvar_RegisterVariable (&sv_autosave_interval);
+	Cvar_RegisterVariable (&sv_pogo);
+
 
 	Cmd_AddCommand ("sv_protocol", &SV_Protocol_f); //johnfitz
 

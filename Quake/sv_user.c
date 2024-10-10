@@ -43,6 +43,9 @@ usercmd_t	cmd;
 cvar_t	sv_idealpitchscale = {"sv_idealpitchscale","0.8",CVAR_NONE};
 cvar_t	sv_altnoclip = {"sv_altnoclip","1",CVAR_ARCHIVE}; //johnfitz
 
+cvar_t sv_pogo = { "sv_pogo", "0", CVAR_NONE };
+
+
 /*
 ===============
 SV_SetIdealPitch
@@ -390,6 +393,18 @@ void SV_ClientThink (void)
 	velocity = sv_player->v.velocity;
 
 	DropPunchAngle ();
+
+	// Pogo (bunny hop) function
+	if (sv_pogo.value && onground && (host_client->edict->v.button2))
+	{
+		// Perform jump
+		velocity[2] += 270; // Quake's default jump velocity
+		onground = false;
+		sv_player->v.flags = (int)sv_player->v.flags & ~FL_ONGROUND;
+		Sys_Printf ("\n\n POGOOOOOOOOO \n");
+		// Play jump sound
+		SV_StartSound (sv_player, 0, "player/plyrjmp8.wav", 255, 1);
+	}
 
 //
 // if dead, behave differently
