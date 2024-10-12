@@ -477,19 +477,20 @@ typedef struct bmodel_draw_indirect_s {
 	GLuint		baseInstance;
 } bmodel_draw_indirect_t;
 
-typedef struct bmodel_gpu_leaf_s {
-	vec3_t		mins;
-	GLuint		firstsurf;
-	vec3_t		maxs;
-	GLuint		surfcountsky; // bit 0=sky; bits 1..31=surfcount
-} bmodel_gpu_leaf_t;
+typedef struct bmodel_gpu_marksurf_s {
+	GLuint		packedleafsky; // bit 0=sky; bits 1..31=leafindex
+	GLuint		surfindex;
+} bmodel_gpu_marksurf_t;
 
 typedef struct bmodel_gpu_surf_s {
 	vec4_t		plane;
+	vec3_t		mins;
 	GLuint		framecount;
+	vec3_t		maxs;
 	GLuint		texnum;
 	GLuint		numedges;
 	GLuint		firstvert;
+	GLuint		padding[2];
 } bmodel_gpu_surf_t;
 
 void GL_BuildLightmaps (void);
