@@ -28,6 +28,8 @@ edict_t	*sv_player;
 extern	cvar_t	sv_friction;
 cvar_t	sv_edgefriction = {"edgefriction", "2", CVAR_NONE};
 extern	cvar_t	sv_stopspeed;
+extern cvar_t sv_cheats;
+extern cvar_t cl_pogo;
 
 static	vec3_t		forward, right, up;
 
@@ -43,7 +45,6 @@ usercmd_t	cmd;
 cvar_t	sv_idealpitchscale = {"sv_idealpitchscale","0.8",CVAR_NONE};
 cvar_t	sv_altnoclip = {"sv_altnoclip","1",CVAR_ARCHIVE}; //johnfitz
 
-cvar_t sv_pogo = { "sv_pogo", "0", CVAR_NONE };
 
 
 /*
@@ -395,7 +396,7 @@ void SV_ClientThink (void)
 	DropPunchAngle ();
 
 	// Pogo (bunny hop) function
-	if (sv_pogo.value && onground && (host_client->edict->v.button2))
+	if (sv_cheats.value && onground && cl_pogo.value &&(host_client->edict->v.button2))
 	{
 		// Perform jump
 		velocity[2] += 270; // Quake's default jump velocity

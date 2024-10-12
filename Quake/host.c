@@ -91,6 +91,7 @@ cvar_t cl_titlestats = {"cl_titlestats","1",CVAR_ARCHIVE};
 cvar_t	campaign = {"campaign","0",CVAR_NONE}; // for the 2021 rerelease
 cvar_t	horde = {"horde","0",CVAR_NONE}; // for the 2021 rerelease
 cvar_t	sv_cheats = {"sv_cheats","0",CVAR_NONE}; // for the 2021 rerelease
+cvar_t cl_pogo = { "cl_pogo", "0", CVAR_ARCHIVE };
 
 cvar_t	sv_autosave = {"sv_autosave", "1", CVAR_ARCHIVE};
 cvar_t	sv_autosave_interval = {"sv_autosave_interval", "30", CVAR_ARCHIVE};
@@ -398,6 +399,7 @@ void Host_InitLocal (void)
 	Cvar_RegisterVariable (&campaign);
 	Cvar_RegisterVariable (&horde);
 	Cvar_RegisterVariable (&sv_cheats);
+	Cvar_RegisterVariable (&cl_pogo);
 
 	Cvar_RegisterVariable (&pausable);
 

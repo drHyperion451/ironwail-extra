@@ -32,6 +32,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 extern cvar_t	pausable;
 extern cvar_t	nomonsters;
+extern cvar_t	cl_pogo;
 
 // 0 = no, 1 = ask, 2 = when dead, 3 = always
 cvar_t sv_autoload = {"sv_autoload", "2", CVAR_ARCHIVE};
@@ -1876,7 +1877,24 @@ static void Host_Fly_f (void)
 	}
 	//johnfitz
 }
+/*
+==================
+Host_Pogo_f
+==================
+*/
 
+static void Host_Pogo_f () 
+{
+	if (Cmd_Argc () > 1)
+	{
+		Cvar_SetValue ("cl_pogo", atof (Cmd_Argv (1)));
+	}
+	else
+	{
+		Cvar_SetValue ("cl_pogo", !cl_pogo.value);
+	}
+	Con_Printf ("Pogo %s\n", cl_pogo.value ? "ON" : "OFF");
+}
 /*
 ==================
 Host_Ping_f
