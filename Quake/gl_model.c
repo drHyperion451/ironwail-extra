@@ -80,6 +80,10 @@ static void R_MD5_f (cvar_t *cvar)
 	for (i=0 , mod=mod_known ; i<mod_numknown ; i++, mod++)
 		if (mod->type == mod_alias)
 			Mod_LoadModel (mod, false);
+
+	if (cls.state == ca_connected && cls.signon == SIGNONS)
+		for (i = 0; i < cl.maxclients; i++)
+			R_TranslateNewPlayerSkin (i);
 }
 
 /*
@@ -1143,20 +1147,43 @@ static void CalcSurfaceExtents (msurface_t *s)
 	int		i,j, e;
 	mvertex_t	*v;
 	mtexinfo_t	*tex;
-	int		bmins[2], bmaxs[2];
+	double	texvecs[2][4];
 
 	mins[0] = mins[1] = FLT_MAX;
 	maxs[0] = maxs[1] = -FLT_MAX;
 
 	tex = s->texinfo;
 
+#ifdef USE_SSE2
+	{
+		__m128 tv0 = _mm_loadu_ps (tex->vecs[0]);
+		__m128 tv1 = _mm_loadu_ps (tex->vecs[1]);
+		_mm_storeu_pd (&texvecs[0][0], _mm_cvtps_pd (tv0));
+		_mm_storeu_pd (&texvecs[0][2], _mm_cvtps_pd (_mm_shuffle_ps (tv0, tv0, _MM_SHUFFLE (1, 0, 3, 2))));
+		_mm_storeu_pd (&texvecs[1][0], _mm_cvtps_pd (tv1));
+		_mm_storeu_pd (&texvecs[1][2], _mm_cvtps_pd (_mm_shuffle_ps (tv1, tv1, _MM_SHUFFLE (1, 0, 3, 2))));
+	}
+#else
+	for (i=0 ; i<4 ; i++)
+	{
+		texvecs[0][i] = (double) tex->vecs[0][i];
+		texvecs[1][i] = (double) tex->vecs[1][i];
+	}
+#endif
+
 	for (i=0 ; i<s->numedges ; i++)
 	{
+		double vposition[3];
+
 		e = loadmodel->surfedges[s->firstedge+i];
 		if (e >= 0)
 			v = &loadmodel->vertexes[loadmodel->edges[e].v[0]];
 		else
 			v = &loadmodel->vertexes[loadmodel->edges[-e].v[1]];
+
+		vposition[0] = (double) v->position[0];
+		vposition[1] = (double) v->position[1];
+		vposition[2] = (double) v->position[2];
 
 		for (j=0 ; j<2 ; j++)
 		{
@@ -1175,28 +1202,58 @@ static void CalcSurfaceExtents (msurface_t *s)
 			 * and using SSE2 floating-point.  A potential trouble spot
 			 * is the hallway at the beginning of mfxsp17.  -- ericw
 			 */
-			val =	((double)v->position[0] * (double)tex->vecs[j][0]) +
-				((double)v->position[1] * (double)tex->vecs[j][1]) +
-				((double)v->position[2] * (double)tex->vecs[j][2]) +
-				(double)tex->vecs[j][3];
+			val =
+				(vposition[0] * texvecs[j][0]) +
+				(vposition[1] * texvecs[j][1]) +
+				(vposition[2] * texvecs[j][2]) +
+				texvecs[j][3];
 
-			if (val < mins[j])
-				mins[j] = val;
-			if (val > maxs[j])
-				maxs[j] = val;
+			mins[j] = q_min (mins[j], val);
+			maxs[j] = q_max (maxs[j], val);
 		}
 	}
 
 	for (i=0 ; i<2 ; i++)
 	{
-		bmins[i] = floor(mins[i]/16);
-		bmaxs[i] = ceil(maxs[i]/16);
+		int bmin = 16 * (int) floor (mins[i]/16);
+		int bmax = 16 * (int) ceil (maxs[i]/16);
 
-		s->texturemins[i] = bmins[i] * 16;
-		s->extents[i] = (bmaxs[i] - bmins[i]) * 16;
+		s->texturemins[i] = bmin;
+		s->extents[i] = bmax - bmin;
 
 		if ( !(tex->flags & TEX_SPECIAL) && s->extents[i] > 2000) //johnfitz -- was 512 in glquake, 256 in winquake
 			Sys_Error ("Bad surface extents");
+	}
+}
+
+/*
+=================
+Mod_CalcSurfaceBounds -- johnfitz -- calculate bounding box for per-surface frustum culling
+=================
+*/
+void Mod_CalcSurfaceBounds (msurface_t *s)
+{
+	int			i, e;
+	mvertex_t	*v;
+
+	s->mins[0] = s->mins[1] = s->mins[2] = FLT_MAX;
+	s->maxs[0] = s->maxs[1] = s->maxs[2] = -FLT_MAX;
+
+	for (i=0 ; i<s->numedges ; i++)
+	{
+		e = loadmodel->surfedges[s->firstedge+i];
+		if (e >= 0)
+			v = &loadmodel->vertexes[loadmodel->edges[e].v[0]];
+		else
+			v = &loadmodel->vertexes[loadmodel->edges[-e].v[1]];
+
+		s->mins[0] = q_min (s->mins[0], v->position[0]);
+		s->mins[1] = q_min (s->mins[1], v->position[1]);
+		s->mins[2] = q_min (s->mins[2], v->position[2]);
+
+		s->maxs[0] = q_max (s->maxs[0], v->position[0]);
+		s->maxs[1] = q_max (s->maxs[1], v->position[1]);
+		s->maxs[2] = q_max (s->maxs[2], v->position[2]);
 	}
 }
 
@@ -1279,6 +1336,8 @@ static void Mod_LoadFaces (lump_t *l, qboolean bsp2)
 		out->texinfo = loadmodel->texinfo + texinfon;
 
 		CalcSurfaceExtents (out);
+
+		Mod_CalcSurfaceBounds (out); //johnfitz -- for per-surface frustum culling
 
 	// lighting info
 		if (loadmodel->bspversion == BSPVERSION_QUAKE64)
@@ -2669,10 +2728,10 @@ ALIAS MODELS
 ==============================================================================
 */
 
-aliashdr_t	*pheader;
+aliashdr_t			*pheader;
 
-stvert_t	stverts[MAXALIASVERTS];
-mtriangle_t	triangles[MAXALIASTRIS];
+const stvert_t		*stverts;
+const dtriangle_t	*triangles;
 
 // a pose is a single set of vertexes.  a frame may be
 // an animating sequence of poses
@@ -3145,6 +3204,17 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 	daliasskintype_t	*pskintype;
 	int					start, end, total;
 
+	start = Hunk_LowMark ();
+
+	pinmodel = (mdl_t *)buffer;
+	mod_base = (byte *)buffer; //johnfitz
+
+	version = LittleLong (pinmodel->version);
+	if (version != ALIAS_VERSION)
+		Sys_Error ("%s has wrong version number (%i should be %i)",
+			mod->name, version, ALIAS_VERSION);
+	mod->flags = LittleLong (pinmodel->flags);
+
 	if (r_md5.value)
 	{
 		COM_StripExtension (mod->name, path, sizeof (path));
@@ -3162,16 +3232,6 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 		}
 	}
 
-	start = Hunk_LowMark ();
-
-	pinmodel = (mdl_t *)buffer;
-	mod_base = (byte *)buffer; //johnfitz
-
-	version = LittleLong (pinmodel->version);
-	if (version != ALIAS_VERSION)
-		Sys_Error ("%s has wrong version number (%i should be %i)",
-				 mod->name, version, ALIAS_VERSION);
-
 //
 // allocate space for a working header, plus all the data except the frames,
 // skin and group info
@@ -3179,8 +3239,6 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 	size	= sizeof(aliashdr_t) +
 		 (LittleLong (pinmodel->numframes) - 1) * sizeof (pheader->frames[0]);
 	pheader = (aliashdr_t *) Hunk_AllocName (size, loadname);
-
-	mod->flags = LittleLong (pinmodel->flags);
 
 //
 // endian-adjust and copy the data, starting with the alias model header
@@ -3198,17 +3256,17 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 
 	if (pheader->numverts <= 0)
 		Sys_Error ("model %s has no vertices", mod->name);
-
-	if (pheader->numverts > MAXALIASVERTS)
+	else if (pheader->numverts > MAXALIASVERTS)
 		Sys_Error ("model %s has too many vertices (%d; max = %d)", mod->name, pheader->numverts, MAXALIASVERTS);
+	else if (pheader->numverts > MAXALIASVERTS_QS && (developer.value || map_checks.value))
+		Con_Warning ("model %s vertex count of %d exceeds QS limit of %d\n", mod->name, pheader->numverts, MAXALIASVERTS_QS);
 
 	pheader->numtris = LittleLong (pinmodel->numtris);
 
 	if (pheader->numtris <= 0)
 		Sys_Error ("model %s has no triangles", mod->name);
-
-	if (pheader->numtris > MAXALIASTRIS)
-		Sys_Error ("model %s has too many triangles (%d; max = %d)", mod->name, pheader->numtris, MAXALIASTRIS);
+	else if (pheader->numtris > MAXALIASTRIS_QS && (developer.value || map_checks.value))
+		Con_Warning ("model %s triangle count of %d exceeds QS limit of %d\n", mod->name, pheader->numtris, MAXALIASTRIS_QS);
 
 	pheader->numframes = LittleLong (pinmodel->numframes);
 	numframes = pheader->numframes;
@@ -3233,29 +3291,31 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer)
 	pskintype = (daliasskintype_t *) Mod_LoadAllSkins (pheader->numskins, pskintype);
 
 //
-// load base s and t vertices
+// endian-swap base s and t vertices in place
 //
 	pinstverts = (stvert_t *)pskintype;
+	stverts = pinstverts;
 
 	for (i=0 ; i<pheader->numverts ; i++)
 	{
-		stverts[i].onseam = LittleLong (pinstverts[i].onseam);
-		stverts[i].s = LittleLong (pinstverts[i].s);
-		stverts[i].t = LittleLong (pinstverts[i].t);
+		pinstverts[i].onseam = LittleLong (pinstverts[i].onseam);
+		pinstverts[i].s = LittleLong (pinstverts[i].s);
+		pinstverts[i].t = LittleLong (pinstverts[i].t);
 	}
 
 //
-// load triangle lists
+// endian-swap triangle lists in place
 //
 	pintriangles = (dtriangle_t *)&pinstverts[pheader->numverts];
+	triangles = pintriangles;
 
 	for (i=0 ; i<pheader->numtris ; i++)
 	{
-		triangles[i].facesfront = LittleLong (pintriangles[i].facesfront);
+		pintriangles[i].facesfront = LittleLong (pintriangles[i].facesfront);
 
 		for (j=0 ; j<3 ; j++)
 		{
-			triangles[i].vertindex[j] =
+			pintriangles[i].vertindex[j] =
 					LittleLong (pintriangles[i].vertindex[j]);
 		}
 	}
@@ -3448,7 +3508,6 @@ static void Mod_LoadSpriteModel (qmodel_t *mod, void *buffer)
 	psprite->type = LittleLong (pin->type);
 	psprite->maxwidth = LittleLong (pin->width);
 	psprite->maxheight = LittleLong (pin->height);
-	psprite->beamlength = LittleFloat (pin->beamlength);
 	mod->synctype = (synctype_t) LittleLong (pin->synctype);
 	psprite->numframes = numframes;
 
@@ -3564,19 +3623,19 @@ static qboolean MD5_ParseCheck(const char *s, const char **buffer)
 }
 static size_t MD5_ParseUInt(const char **buffer)
 {
-	size_t i = SDL_strtoull(com_token, NULL, 0);
+	size_t i = strtoull(com_token, NULL, 0);
 	*buffer = COM_Parse(*buffer);
 	return i;
 }
 static long MD5_ParseSInt(const char **buffer)
 {
-	long i = SDL_strtol(com_token, NULL, 0);
+	long i = strtol(com_token, NULL, 0);
 	*buffer = COM_Parse(*buffer);
 	return i;
 }
 static double MD5_ParseFloat(const char **buffer)
 {
-	double i = SDL_strtod(com_token, NULL);
+	double i = strtod(com_token, NULL);
 	*buffer = COM_Parse(*buffer);
 	return i;
 }
@@ -3585,6 +3644,7 @@ static double MD5_ParseFloat(const char **buffer)
 #define MD5SINT() MD5_ParseSInt(&buffer)
 #define MD5FLOAT() MD5_ParseFloat(&buffer)
 #define MD5CHECK(s) MD5_ParseCheck(s, &buffer)
+#define MD5IGNORE() buffer = COM_Parse(buffer)
 
 typedef struct
 {
@@ -3830,24 +3890,6 @@ static void MD5_ComputeNormals(iqmvert_t *vert, size_t numverts, unsigned short 
 	free (hashmap);
 }
 
-static unsigned int MD5_HackyModelFlags(const char *name)
-{
-	unsigned int ret = 0;
-	char oldmodel[MAX_QPATH];
-	mdl_t *f;
-	COM_StripExtension(name, oldmodel, sizeof(oldmodel));
-	COM_AddExtension(oldmodel, ".mdl", sizeof(oldmodel));
-
-	f = (mdl_t*)COM_LoadMallocFile(oldmodel, NULL);
-	if (f)
-	{
-		if (com_filesize >= sizeof(*f) && LittleLong(f->ident) == IDPOLYHEADER && LittleLong(f->version) == ALIAS_VERSION)
-			ret = f->flags;
-		free(f);
-	}
-	return ret;
-}
-
 typedef struct
 {
 	char *animfile;
@@ -3937,15 +3979,15 @@ static void MD5Anim_Load(md5animctx_t *ctx, boneinfo_t *bones, size_t numbones)
 	MD5EXPECT("{");
 	while(MD5CHECK("("))
 	{
-		(void)MD5FLOAT();
-		(void)MD5FLOAT();
-		(void)MD5FLOAT();
+		MD5IGNORE();
+		MD5IGNORE();
+		MD5IGNORE();
 		MD5EXPECT(")");
 
 		MD5EXPECT("(");
-		(void)MD5FLOAT();
-		(void)MD5FLOAT();
-		(void)MD5FLOAT();
+		MD5IGNORE();
+		MD5IGNORE();
+		MD5IGNORE();
 		MD5EXPECT(")");
 	}
 	MD5EXPECT("}");
@@ -3954,15 +3996,15 @@ static void MD5Anim_Load(md5animctx_t *ctx, boneinfo_t *bones, size_t numbones)
 	MD5EXPECT("{");
 	while(MD5CHECK("("))
 	{
-		(void)MD5FLOAT();
-		(void)MD5FLOAT();
-		(void)MD5FLOAT();
+		MD5IGNORE();
+		MD5IGNORE();
+		MD5IGNORE();
 		MD5EXPECT(")");
 
 		MD5EXPECT("(");
-		(void)MD5FLOAT();
-		(void)MD5FLOAT();
-		(void)MD5FLOAT();
+		MD5IGNORE();
+		MD5IGNORE();
+		MD5IGNORE();
 		MD5EXPECT(")");
 	}
 	MD5EXPECT("}");
@@ -4269,8 +4311,7 @@ static void Mod_LoadMD5MeshModel (qmodel_t *mod, const char *buffer)
 
 	GLMesh_LoadVertexBuffer (mod, outhdr);
 
-	//the md5 format does not have its own modelflags, yet we still need to know about trails and rotating etc
-	mod->flags = MD5_HackyModelFlags(mod->name);
+	// Note: the md5 format does not have its own modelflags, yet we still need to know about trails and rotating etc, so we reuse the flags from the mdl version.
 
 	mod->synctype = ST_FRAMETIME;	//keep IQM animations synced to when .frame is changed. framegroups are otherwise not very useful.
 	mod->type = mod_alias;

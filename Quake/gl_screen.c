@@ -92,6 +92,7 @@ cvar_t		scr_crosshairscale = {"scr_crosshairscale", "1", CVAR_ARCHIVE};
 cvar_t		scr_pixelaspect = {"scr_pixelaspect", "1", CVAR_ARCHIVE};
 cvar_t		scr_showfps = {"scr_showfps", "0", CVAR_ARCHIVE};
 cvar_t		scr_showspeed = {"scr_showspeed", "0", CVAR_ARCHIVE};
+cvar_t		scr_showspeed_ofs = {"scr_showspeed_ofs", "0", CVAR_ARCHIVE};
 cvar_t		scr_clock = {"scr_clock", "0", CVAR_ARCHIVE};
 //johnfitz
 cvar_t		scr_usekfont = {"scr_usekfont", "0", CVAR_NONE}; // 2021 re-release
@@ -124,6 +125,7 @@ extern	cvar_t	con_notifyfadetime;
 
 extern	edict_t	**bbox_linked;
 extern	cvar_t	r_showfields;
+extern	cvar_t	r_showfields_align;
 
 qboolean	scr_initialized;		// ready to draw
 
@@ -635,6 +637,7 @@ void SCR_Init (void)
 	Cvar_RegisterVariable (&scr_crosshairscale);
 	Cvar_RegisterVariable (&scr_showfps);
 	Cvar_RegisterVariable (&scr_showspeed);
+	Cvar_RegisterVariable (&scr_showspeed_ofs);
 	Cvar_RegisterVariable (&scr_clock);
 	Cvar_RegisterVariable (&cl_screenshotname);
 	Cvar_RegisterVariable (&scr_demobar_timeout);
@@ -752,6 +755,9 @@ SCR_DrawSpeed
 */
 void SCR_DrawSpeed (void)
 {
+	if (cl.intermission || CL_InCutscene () || scr_viewsize.value >= 130)
+		return;
+
 	const float show_speed_interval_value = 0.05f;
 	static float maxspeed = 0, display_speed = -1;
 	static double lastrealtime = 0;
@@ -776,10 +782,13 @@ void SCR_DrawSpeed (void)
 	{
 		if (display_speed >= 0)
 		{
+			float y;
 			char str[12];
+
 			sprintf (str, "%d", (int) display_speed);
 			GL_SetCanvas (CANVAS_CROSSHAIR);
-			Draw_String (-(int)strlen(str)*4, 4, str);
+			y = CLAMP (glcanvas.top, 4.f + scr_showspeed_ofs.value, glcanvas.bottom - 8.f);
+			Draw_String (-(int)strlen(str)*4, y, str);
 		}
 	}
 
@@ -1344,15 +1353,34 @@ void SCR_DrawEdictInfo (void)
 	vec3_t		crosshair, focus, anchor, proj, bgcolor;
 	edict_t		*ed;
 
-	if (VEC_SIZE (bbox_linked) == 0)
+	if (VEC_SIZE (bbox_linked) == 0 && VEC_SIZE (r_pointfile) == 0)
 		return;
 
 	GL_SetCanvas (CANVAS_BOTTOMRIGHT);
 	SCR_SetupProjToCanvasMap (&proj2canvas);
+	VectorMA (r_origin, 8.f, vpn, crosshair);
+
+	// If a pointfile was loaded, print "Leak" at the beginning
+	if (VEC_SIZE (r_pointfile) != 0)
+	{
+		VectorCopy (r_pointfile[0], anchor);
+		SCR_ClipToFrustum (anchor, crosshair);
+		ProjectVector (anchor, r_matviewproj, proj);
+		SCR_ProjToCanvas (proj, &proj2canvas, &x, &y);
+
+		VEC_CLEAR (scr_edictoverlaystrings);
+		MultiString_Append (&scr_edictoverlaystrings, "");
+		COM_TintString ("Leak", tinted, sizeof (tinted));
+		MultiString_Append (&scr_edictoverlaystrings, tinted);
+
+		SCR_DrawKeyValueOverlay (x, y, scr_edictoverlaystrings, rgb_black);
+	}
+
+	if (VEC_SIZE (bbox_linked) == 0)
+		return;
 
 	PR_SwitchQCVM (&sv.qcvm);
 
-	VectorMA (r_origin, 8.f, vpn, crosshair);
 	SCR_GetEntityCenter (bbox_linked[0], focus);
 	SCR_ClipToFrustum (focus, crosshair);
 
@@ -1366,9 +1394,9 @@ void SCR_DrawEdictInfo (void)
 		// Compute anchor point
 		if (i == 0)
 		{
-			// With r_showfields < 0 the field overlay tracks the focused entity,
+			// With r_showfields_align 0 the field overlay tracks the focused entity,
 			// so we disable the simple one (number + classname) to avoid overlap.
-			if (r_showfields.value < 0.f)
+			if (!r_showfields_align.value)
 				continue;
 			//SCR_GetEntityBottom (ed, anchor);
 			SCR_GetEntityCenter (ed, anchor);
@@ -1415,8 +1443,8 @@ void SCR_DrawEdictInfo (void)
 		ProjectVector (anchor, r_matviewproj, proj);
 		SCR_ProjToCanvas (proj, &proj2canvas, &x, &y);
 
-		// r_showfields > 0 locks the overlay to the bottom-right
-		if (r_showfields.value > 0.f)
+		// r_showfields_align 1 locks the overlay to the bottom-right
+		if (r_showfields_align.value)
 		{
 			x = glcanvas.right;
 			y = glcanvas.bottom;
@@ -1433,12 +1461,23 @@ void SCR_DrawEdictInfo (void)
 		// Add all relevant fields, excluding classname (already added to the header)
 		for (i = 1; i < qcvm->progs->numfielddefs; i++)
 		{
-			ddef_t *d = &qcvm->fielddefs[i];
+			stringview_t	line;
+			const char		*val;
+			ddef_t			*d = &qcvm->fielddefs[i];
+
 			if (d->ofs*4 == offsetof (entvars_t, classname) || !ED_IsRelevantField (ed, d))
 				continue;
+
 			COM_TintString (PR_GetString (d->s_name), tinted, sizeof (tinted));
-			MultiString_Append (&scr_edictoverlaystrings, tinted);
-			MultiString_Append (&scr_edictoverlaystrings, ED_FieldValueString (ed, d));
+			val = ED_FieldValueString (ed, d);
+
+			while (COM_ParseLine (&val, &line))
+			{
+				MultiString_Append (&scr_edictoverlaystrings, tinted);
+				MultiString_AppendN (&scr_edictoverlaystrings, line.data, line.len);
+				tinted[0] = ' ';
+				tinted[1] = '\0';
+			}
 		}
 
 		SCR_DrawKeyValueOverlay (x, y, scr_edictoverlaystrings, rgb_black);

@@ -69,8 +69,10 @@ cvar_t	joy_flick_time = { "joy_flick_time", "0.125", CVAR_ARCHIVE };
 cvar_t	joy_flick_recenter = { "joy_flick_recenter", "0.0", CVAR_ARCHIVE };
 cvar_t	joy_flick_deadzone = { "joy_flick_deadzone", "0.9", CVAR_ARCHIVE };
 cvar_t	joy_flick_noise_thresh = { "joy_flick_noise_thresh", "2.0", CVAR_ARCHIVE };
+cvar_t	joy_flick_adjust_speed = { "joy_flick_adjust_speed", "30.0", CVAR_ARCHIVE };
 cvar_t	joy_rumble = { "joy_rumble", "0.3", CVAR_ARCHIVE };
 cvar_t	joy_device = { "joy_device", "0", CVAR_ARCHIVE };
+cvar_t	joy_always_active = { "joy_always_active", "0", CVAR_ARCHIVE };
 
 cvar_t gyro_enable = {"gyro_enable", "1", CVAR_ARCHIVE};
 cvar_t gyro_mode = {"gyro_mode", "2", CVAR_ARCHIVE}; // 2 = GYRO_BUTTON_DISABLES (see gyromode_t)
@@ -120,6 +122,7 @@ static struct
 {
 	float	yaw;
 	float	pitch;
+	float	yaw_delta;
 	float	prev_lerp_frac;
 	float	prev_angle;
 	float	prev_scale;
@@ -331,6 +334,10 @@ static qboolean IN_UseController (int device_index)
 #if SDL_VERSION_ATLEAST (2, 0, 9)
 		if (joy_has_rumble)
 			SDL_GameControllerRumble (joy_active_controller, 0, 0, 100);
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+		if (SDL_GameControllerHasLED (joy_active_controller))
+			SDL_GameControllerSetLED (joy_active_controller, 0, 0, 0);
+#endif // SDL_VERSION_ATLEAST (2, 0, 14)
 #endif // SDL_VERSION_ATLEAST (2, 0, 9)
 		SDL_GameControllerClose (joy_active_controller);
 
@@ -463,33 +470,64 @@ static qboolean IN_RemapJoystick (void)
 
 void IN_StartupJoystick (void)
 {
-	int i;
-	int nummappings;
-	char controllerdb[MAX_OSPATH];
-	
-	if (COM_CheckParm("-nojoy"))
-		return;
+    int i;
+    int nummappings;
+    char controllerdb[MAX_OSPATH];
 
-	if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) == -1 )
-	{
-		Con_Warning("could not initialize SDL Game Controller\n");
-		return;
-	}
+    if (COM_CheckParm("-nojoy"))
+        return;
 
-	// Load additional SDL2 controller definitions from gamecontrollerdb.txt
-	for (i = 0; i < com_numbasedirs; i++)
-	{
-		q_snprintf (controllerdb, sizeof(controllerdb), "%s/gamecontrollerdb.txt", com_basedirs[i]);
-		nummappings = SDL_GameControllerAddMappingsFromFile(controllerdb);
-		if (nummappings > 0)
-			Con_Printf("%d mappings loaded from gamecontrollerdb.txt\n", nummappings);
-	}
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+	SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI_GAMECUBE, "1");
+#endif
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+	SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI_PS5, "1");
+#endif
+#if SDL_VERSION_ATLEAST(2, 0, 22)
+	SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI, "1");
+	SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI_PS4, "1");
+	SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI_SWITCH, "1");
+	SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI_JOY_CONS, "1");
 
-	IN_SetupJoystick ();
+	// Enable rumble and motion sensors for PS4 and PS5 controllers while uder Bluetooth connectivitiy
+	SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "1");
+	SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1");
+#endif
+#if SDL_VERSION_ATLEAST(2, 23, 2)
+	SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI_COMBINE_JOY_CONS, "1");
+#endif
+#if SDL_VERSION_ATLEAST(2, 25, 1)
+	SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI_PS3, "1");
+#endif
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+	SDL_SetHint (SDL_HINT_JOYSTICK_HIDAPI_WII, "1");
+#endif
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+	SDL_SetHint (SDL_HINT_JOYSTICK_RAWINPUT, "1");
+	SDL_SetHint (SDL_HINT_JOYSTICK_RAWINPUT_CORRELATE_XINPUT, "1");
+#endif
+
+    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) == -1)
+    {
+        Con_Warning("could not initialize SDL Game Controller\n");
+        return;
+    }
+
+    // Load additional SDL2 controller definitions from gamecontrollerdb.txt
+    for (i = 0; i < com_numbasedirs; i++)
+    {
+        q_snprintf(controllerdb, sizeof(controllerdb), "%s/gamecontrollerdb.txt", com_basedirs[i]);
+        nummappings = SDL_GameControllerAddMappingsFromFile(controllerdb);
+        if (nummappings > 0)
+            Con_Printf("%d mappings loaded from gamecontrollerdb.txt\n", nummappings);
+    }
+
+    IN_SetupJoystick();
 }
 
 void IN_ShutdownJoystick (void)
 {
+	IN_UseController (-1);
 	SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
 }
 
@@ -645,10 +683,12 @@ void IN_Init (void)
 	Cvar_RegisterVariable(&joy_flick_recenter);
 	Cvar_RegisterVariable(&joy_flick_deadzone);
 	Cvar_RegisterVariable(&joy_flick_noise_thresh);
+	Cvar_RegisterVariable(&joy_flick_adjust_speed);
 	Cvar_RegisterVariable(&joy_rumble);
 	Cvar_RegisterVariable(&joy_device);
 	Cvar_SetCallback(&joy_device, Joy_Device_f);
 	Cvar_SetCompletion(&joy_device, Joy_Device_Completion_f);
+	Cvar_RegisterVariable(&joy_always_active);
 
 	Cvar_RegisterVariable(&gyro_enable);
 	Cvar_RegisterVariable(&gyro_mode);
@@ -877,6 +917,27 @@ static void IN_JoyKeyEvent(qboolean wasdown, qboolean isdown, int key, double *t
 	}
 }
 
+static joyaxis_t IN_GetLookAxis (joyaxisstate_t *state)
+{
+	joyaxis_t axis;
+	axis.x = state->axisvalue[joy_swapmovelook.value ? SDL_CONTROLLER_AXIS_LEFTX : SDL_CONTROLLER_AXIS_RIGHTX];
+	axis.y = state->axisvalue[joy_swapmovelook.value ? SDL_CONTROLLER_AXIS_LEFTY : SDL_CONTROLLER_AXIS_RIGHTY];
+	return axis;
+}
+
+static joyaxis_t IN_GetMoveAxis (joyaxisstate_t *state)
+{
+	joyaxis_t axis;
+	axis.x = state->axisvalue[joy_swapmovelook.value ? SDL_CONTROLLER_AXIS_RIGHTX : SDL_CONTROLLER_AXIS_LEFTX];
+	axis.y = state->axisvalue[joy_swapmovelook.value ? SDL_CONTROLLER_AXIS_RIGHTY : SDL_CONTROLLER_AXIS_LEFTY];
+	return axis;
+}
+
+static qboolean IN_JoyActive (void)
+{
+	return joy_active_controller != NULL && (joy_always_active.value || lastactivetype == KD_GAMEPAD);
+}
+
 /*
 ================
 IN_Commands
@@ -914,12 +975,18 @@ void IN_Commands (void)
 	// emit emulated arrow keys so the analog sticks can be used in the menu
 	if (key_dest != key_game)
 	{
-		int xaxis = joy_swapmovelook.value ? SDL_CONTROLLER_AXIS_RIGHTX : SDL_CONTROLLER_AXIS_LEFTX;
-		int yaxis = joy_swapmovelook.value ? SDL_CONTROLLER_AXIS_RIGHTY : SDL_CONTROLLER_AXIS_LEFTY;
-		IN_JoyKeyEvent(joy_axisstate.axisvalue[xaxis] < -stickthreshold, newaxisstate.axisvalue[xaxis] < -stickthreshold, K_LEFTARROW, &joy_emulatedkeytimer[0]);
-		IN_JoyKeyEvent(joy_axisstate.axisvalue[xaxis] > stickthreshold,  newaxisstate.axisvalue[xaxis] > stickthreshold, K_RIGHTARROW, &joy_emulatedkeytimer[1]);
-		IN_JoyKeyEvent(joy_axisstate.axisvalue[yaxis] < -stickthreshold, newaxisstate.axisvalue[yaxis] < -stickthreshold, K_UPARROW, &joy_emulatedkeytimer[2]);
-		IN_JoyKeyEvent(joy_axisstate.axisvalue[yaxis] > stickthreshold,  newaxisstate.axisvalue[yaxis] > stickthreshold, K_DOWNARROW, &joy_emulatedkeytimer[3]);
+		joyaxis_t old_move = IN_GetMoveAxis (&joy_axisstate);
+		joyaxis_t new_move = IN_GetMoveAxis (&newaxisstate);
+		IN_JoyKeyEvent(old_move.x < -stickthreshold, new_move.x < -stickthreshold, K_LEFTARROW,		&joy_emulatedkeytimer[0]);
+		IN_JoyKeyEvent(old_move.x >  stickthreshold, new_move.x >  stickthreshold, K_RIGHTARROW,	&joy_emulatedkeytimer[1]);
+		IN_JoyKeyEvent(old_move.y < -stickthreshold, new_move.y < -stickthreshold, K_UPARROW,		&joy_emulatedkeytimer[2]);
+		IN_JoyKeyEvent(old_move.y >  stickthreshold, new_move.y >  stickthreshold, K_DOWNARROW,		&joy_emulatedkeytimer[3]);
+	}
+	else if (lastactivetype != KD_GAMEPAD)
+	{
+		if (IN_AxisMagnitude (IN_GetLookAxis (&newaxisstate)) > joy_deadzone_look.value ||
+			IN_AxisMagnitude (IN_GetMoveAxis (&newaxisstate)) > joy_deadzone_move.value)
+			lastactivetype = KD_GAMEPAD;
 	}
 
 	// scroll console with look stick
@@ -932,8 +999,7 @@ void IN_Commands (void)
 		joyaxis_t raw, deadzone, eased;
 		float scale;
 
-		raw.x = newaxisstate.axisvalue[joy_swapmovelook.value ? SDL_CONTROLLER_AXIS_LEFTX : SDL_CONTROLLER_AXIS_RIGHTX];
-		raw.y = newaxisstate.axisvalue[joy_swapmovelook.value ? SDL_CONTROLLER_AXIS_LEFTY : SDL_CONTROLLER_AXIS_RIGHTY];
+		raw = IN_GetLookAxis (&newaxisstate);
 		deadzone = IN_ApplyDeadzone (raw, joy_deadzone_look.value, joy_outer_threshold_look.value);
 		eased = IN_ApplyEasing (deadzone, joy_exponent.value);
 		if (joy_invert.value)
@@ -964,7 +1030,7 @@ void IN_Commands (void)
 	joy_axisstate = newaxisstate;
 
 #if SDL_VERSION_ATLEAST (2, 0, 9)
-	if (joy_has_rumble && !IN_IsCalibratingGyro () && joy_rumble.value > 0.f)
+	if (joy_has_rumble && !IN_IsCalibratingGyro () && joy_rumble.value > 0.f && IN_JoyActive ())
 	{
 		float strength = CLAMP (0.f, joy_rumble.value, 1.f) * 0xffff;
 		float lofreq = GetClampedFraction (S_GetLoFreqLevel (), 0.067f, 0.45f);
@@ -1001,21 +1067,12 @@ void IN_JoyMove (usercmd_t *cmd)
 
 	if (!joy_active_controller)
 		return;
-	
+
 	if (cl.paused || key_dest != key_game)
 		return;
 
-	moveRaw.x = joy_axisstate.axisvalue[SDL_CONTROLLER_AXIS_LEFTX];
-	moveRaw.y = joy_axisstate.axisvalue[SDL_CONTROLLER_AXIS_LEFTY];
-	lookRaw.x = joy_axisstate.axisvalue[SDL_CONTROLLER_AXIS_RIGHTX];
-	lookRaw.y = joy_axisstate.axisvalue[SDL_CONTROLLER_AXIS_RIGHTY];
-	
-	if (joy_swapmovelook.value)
-	{
-		joyaxis_t temp = moveRaw;
-		moveRaw = lookRaw;
-		lookRaw = temp;
-	}
+	moveRaw = IN_GetMoveAxis (&joy_axisstate);
+	lookRaw = IN_GetLookAxis (&joy_axisstate);
 
 	moveDeadzone = IN_ApplyDeadzone(moveRaw, joy_deadzone_move.value, joy_outer_threshold_move.value);
 	lookDeadzone = IN_ApplyDeadzone(lookRaw, joy_deadzone_look.value, joy_outer_threshold_look.value);
@@ -1074,7 +1131,18 @@ void IN_JoyMove (usercmd_t *cmd)
 					angle = NormalizeAngle (flick.prev_angle + delta);
 				}
 			}
+			flick.yaw_delta += delta;
+		}
+
+		// apply yaw adjustment
+		if (joy_flick_adjust_speed.value > 0.f)
+			delta = flick.yaw_delta * q_min (1.0, host_rawframetime * joy_flick_adjust_speed.value);
+		else
+			delta = flick.yaw_delta;
+		if (fabs (delta) > 0.01)
+		{
 			cl.viewangles[YAW] -= delta;
+			flick.yaw_delta -= delta;
 		}
 
 		// advance angle animation
@@ -1085,6 +1153,7 @@ void IN_JoyMove (usercmd_t *cmd)
 		}
 		else
 			lerp_frac = 1.f;
+
 		delta = IN_FlickStickEasing (lerp_frac) - IN_FlickStickEasing (flick.prev_lerp_frac);
 		cl.viewangles[YAW] -= flick.yaw * delta;
 		cl.viewangles[PITCH] -= flick.pitch * delta * CLAMP (0.f, joy_flick_recenter.value, 1.f);
@@ -1123,7 +1192,7 @@ void IN_GyroMove(usercmd_t *cmd)
 	if (!gyro_enable.value)
 		return;
 
-	if (!joy_active_controller)
+	if (!IN_JoyActive ())
 		return;
 
 	if (cl.paused || key_dest != key_game)

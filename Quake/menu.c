@@ -41,6 +41,7 @@ extern cvar_t cl_bob;
 extern cvar_t cl_rollangle;
 extern cvar_t cl_maxpitch;
 extern cvar_t cl_minpitch;
+extern cvar_t gl_cshiftpercent;
 extern cvar_t sv_autoload;
 extern cvar_t r_particles;
 extern cvar_t gl_texturemode;
@@ -3104,7 +3105,7 @@ void M_Calibration_Key (int key)
 #define MIN_TRIGGER_DEADZONE	0.f
 #define MAX_TRIGGER_DEADZONE	0.75f
 #define MIN_GYRO_SENS			0.1f
-#define MAX_GYRO_SENS			8.f
+#define MAX_GYRO_SENS			20.f
 #define MIN_GYRO_NOISE_THRESH	0.f
 #define MAX_GYRO_NOISE_THRESH	5.f
 
@@ -3138,7 +3139,7 @@ void M_Menu_Gamepad_f (void)
 		item (OPT_INTERFACE,			"Interface")					\
 		item (SPACER,					"")								\
 		item (OPT_CUSTOMIZE,			"Key Setup")					\
-		item (OPT_GAMEPAD,				"Gamepad")						\
+		item (OPT_GAMEPAD,				"Controller")					\
 		item (OPT_MOUSESPEED,			"Mouse Speed")					\
 		item (OPT_INVMOUSE,				"Invert Mouse")					\
 		item (OPT_SNDVOL,				"Sound Volume")					\
@@ -3197,7 +3198,7 @@ void M_Menu_Gamepad_f (void)
 		item (OPT_CONFIRMQUIT,			"Quit Prompt")					\
 		item (OPT_STARTDEMOS,			"Start Demos")					\
 	end_menu ()															\
-	begin_menu (GAMEPAD_OPTIONS, m_gamepad, TITLE("Gamepad"))			\
+	begin_menu (GAMEPAD_OPTIONS, m_gamepad, TITLE("Controller"))		\
 		item (GPAD_OPT_DEVICE,			"Device")						\
 		item (SPACER,					"")								\
 		item (SPACER,					"")								\
@@ -3227,6 +3228,7 @@ void M_Menu_Gamepad_f (void)
 	begin_menu (GAME_OPTIONS, m_game, TITLE("Game"))					\
 		item (OPT_FOV,					"Field Of View")				\
 		item (OPT_FOVDISTORT,			"Gun Distortion")				\
+		item (OPT_FLASHALPHA,			"Screen Flashes")				\
 		item (OPT_RECOIL,				"Recoil")						\
 		item (OPT_VIEWBOB,				"View Bob")						\
 		item (OPT_ANGLELIMITS,			"Angle Limits")					\
@@ -3781,6 +3783,10 @@ void M_AdjustSliders (int dir)
 		Cvar_SetValueQuick (&v_gunkick, ((int) q_max (v_gunkick.value, 0.f) + 3 + dir) % 3);
 		break;
 
+	case OPT_FLASHALPHA:	// flash intensity
+		Cvar_SetValueQuick (&gl_cshiftpercent, CLAMP (0.f, gl_cshiftpercent.value + dir * 10.f, 100.f));
+		break;
+
 	case OPT_FOV:	// field of view
 		Cvar_SetValueQuick (&scr_fov, CLAMP (FOV_MIN, scr_fov.value + dir * 5.f, FOV_MAX));
 		break;
@@ -4109,6 +4115,9 @@ qboolean M_SetSliderValue (int option, float f)
 	case OPT_SNDVOL:	// sfx volume
 		Cvar_SetValue ("volume", f);
 		return true;
+	case OPT_FLASHALPHA:
+		Cvar_SetValueQuick (&gl_cshiftpercent, f * 100.f);
+		return true;
 	case OPT_FOV:	// field of view
 		f = LERP (FOV_MIN, FOV_MAX, f);
 		if (fabs (f - 90.f) < 5.f)
@@ -4403,6 +4412,11 @@ static void M_Options_DrawItem (int y, int item)
 
 	case OPT_LOOKSPRING:
 		M_DrawCheckbox (x, y, lookspring.value);
+		break;
+
+	case OPT_FLASHALPHA:
+		r = gl_cshiftpercent.value / 100.f;
+		M_DrawSlider (x, y, r, va ("%.0f%%", gl_cshiftpercent.value));
 		break;
 
 	case OPT_FOV:
@@ -4965,6 +4979,7 @@ static const menukeybind_t menubinds[] =
 	{"menu_maps",		"Maps menu",			KDM_ANY},
 	{"menu_options",	"Options menu",			KDM_ANY},
 	{"screenshot",		"Screenshot",			KDM_ANY},
+	{"+showscores",		"Show score",			KDM_ANY},
 };
 
 #define	NUMCOMMANDS		Q_COUNTOF(menubinds)

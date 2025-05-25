@@ -64,7 +64,6 @@ typedef struct aliasinstance_s {
 struct ibuf_s {
 	int			count;
 	entity_t	*ent;
-	gltexture_t	*textures[2];
 
 	struct {
 		float	matviewproj[16];
@@ -292,13 +291,13 @@ void R_SetupAliasLighting (entity_t	*e)
 R_FlushAliasInstances
 =================
 */
-void R_FlushAliasInstances (void)
+void R_FlushAliasInstances (qboolean showtris)
 {
 	extern cvar_t r_softemu_mdl_warp;
 	qmodel_t	*model;
-	aliashdr_t	*paliashdr;
+	aliashdr_t	*mainhdr, *hdr;
 	qboolean	alphatest, translucent, oit, md5;
-	int			mode;
+	int			skinnum, anim, mode;
 	unsigned	state;
 	GLuint		buf;
 	GLbyte		*ofs;
@@ -306,16 +305,18 @@ void R_FlushAliasInstances (void)
 	GLuint		buffers[2];
 	GLintptr	offsets[2];
 	GLsizeiptr	sizes[2];
+	gltexture_t	*textures[2];
 
 	if (!ibuf.count)
 		return;
 
 	model = ibuf.ent->model;
-	paliashdr = (aliashdr_t *)Mod_Extradata (model);
+	mainhdr = (aliashdr_t *)Mod_Extradata (model);
+	anim = (int)(cl.time*10) & 3;
 
 	GL_BeginGroup (model->name);
 
-	md5 = paliashdr->poseverttype == PV_IQM;
+	md5 = mainhdr->poseverttype == PV_IQM;
 
 	alphatest = model->flags & MF_HOLEY ? 1 : 0;
 	translucent = !ENTALPHA_OPAQUE (ibuf.ent->alpha);
@@ -364,41 +365,104 @@ void R_FlushAliasInstances (void)
 	sizes[0] = ibuf_size;
 
 	GL_BindBuffer (GL_ARRAY_BUFFER, model->meshvbo);
-
-	if (md5)
-	{
-		GL_VertexAttribPointerFunc  (0, 3, GL_FLOAT,			GL_FALSE, sizeof (iqmvert_t), (void *) (paliashdr->vbovertofs + offsetof (iqmvert_t, xyz)));
-		GL_VertexAttribPointerFunc  (1, 4, GL_BYTE,				GL_TRUE,  sizeof (iqmvert_t), (void *) (paliashdr->vbovertofs + offsetof (iqmvert_t, norm)));
-		GL_VertexAttribPointerFunc  (2, 2, GL_FLOAT,			GL_FALSE, sizeof (iqmvert_t), (void *) (paliashdr->vbovertofs + offsetof (iqmvert_t, st)));
-		GL_VertexAttribPointerFunc  (3, 4, GL_UNSIGNED_BYTE,	GL_TRUE,  sizeof (iqmvert_t), (void *) (paliashdr->vbovertofs + offsetof (iqmvert_t, weight)));
-		GL_VertexAttribIPointerFunc (4, 4, GL_UNSIGNED_BYTE,	          sizeof (iqmvert_t), (void *) (paliashdr->vbovertofs + offsetof (iqmvert_t, idx)));
-
-		buffers[1] = model->meshvbo;
-		offsets[1] = paliashdr->vboposeofs;
-		sizes[1] = sizeof (bonepose_t) * paliashdr->numbones * paliashdr->numboneposes;
-
-		GL_BindBuffersRange (GL_SHADER_STORAGE_BUFFER, 1, 2, buffers, offsets, sizes);
-	}
-	else
-	{
-		GL_VertexAttribPointerFunc (0, 2, GL_FLOAT, GL_FALSE, sizeof (meshst_t), (void *) paliashdr->vbostofs);
-
-		buffers[1] = model->meshvbo;
-		offsets[1] = paliashdr->vbovertofs;
-		sizes[1] = sizeof (meshxyz_t) * paliashdr->numverts_vbo * paliashdr->numposes;
-
-		GL_BindBuffersRange (GL_SHADER_STORAGE_BUFFER, 1, 2, buffers, offsets, sizes);
-	}
-
-	GL_BindTextures (0, 2, ibuf.textures);
-
 	GL_BindBuffer (GL_ELEMENT_ARRAY_BUFFER, model->meshindexesvbo);
-	GL_DrawElementsInstancedFunc (GL_TRIANGLES, paliashdr->numindexes, GL_UNSIGNED_SHORT, (void *)paliashdr->eboofs, ibuf.count);
 
-	rs_aliaspasses += paliashdr->numtris * ibuf.count;
+	for (hdr = mainhdr; hdr; hdr = hdr->nextsurface ? (aliashdr_t *) ((byte *)hdr + hdr->nextsurface) : NULL)
+	{
+		if (md5)
+		{
+			GL_VertexAttribPointerFunc  (0, 3, GL_FLOAT,			GL_FALSE, sizeof (iqmvert_t), (void *) (hdr->vbovertofs + offsetof (iqmvert_t, xyz)));
+			GL_VertexAttribPointerFunc  (1, 4, GL_BYTE,				GL_TRUE,  sizeof (iqmvert_t), (void *) (hdr->vbovertofs + offsetof (iqmvert_t, norm)));
+			GL_VertexAttribPointerFunc  (2, 2, GL_FLOAT,			GL_FALSE, sizeof (iqmvert_t), (void *) (hdr->vbovertofs + offsetof (iqmvert_t, st)));
+			GL_VertexAttribPointerFunc  (3, 4, GL_UNSIGNED_BYTE,	GL_TRUE,  sizeof (iqmvert_t), (void *) (hdr->vbovertofs + offsetof (iqmvert_t, weight)));
+			GL_VertexAttribIPointerFunc (4, 4, GL_UNSIGNED_BYTE,	          sizeof (iqmvert_t), (void *) (hdr->vbovertofs + offsetof (iqmvert_t, idx)));
+
+			buffers[1] = model->meshvbo;
+			offsets[1] = hdr->vboposeofs;
+			sizes[1] = sizeof (bonepose_t) * hdr->numbones * hdr->numboneposes;
+		}
+		else
+		{
+			GL_VertexAttribPointerFunc (0, 2, GL_FLOAT, GL_FALSE, sizeof (meshst_t), (void *) hdr->vbostofs);
+
+			buffers[1] = model->meshvbo;
+			offsets[1] = hdr->vbovertofs;
+			sizes[1] = sizeof (meshxyz_t) * hdr->numverts_vbo * hdr->numposes;
+		}
+
+		GL_BindBuffersRange (GL_SHADER_STORAGE_BUFFER, 1, 2, buffers, offsets, sizes);
+
+		//
+		// set up textures
+		//
+		skinnum = ibuf.ent->skinnum;
+		if ((skinnum >= hdr->numskins) || (skinnum < 0))
+		{
+			Con_DPrintf ("R_DrawAliasModel: no such skin # %d for '%s'\n", skinnum, model->name);
+			// ericw -- display skin 0 for winquake compatibility
+			skinnum = 0;
+		}
+
+		textures[0] = hdr->gltextures[skinnum][anim];
+		textures[1] = hdr->fbtextures[skinnum][anim];
+		if (hdr == mainhdr && ibuf.ent->colormap != vid.colormap && !gl_nocolors.value)
+			if (CL_IsPlayerEnt (ibuf.ent)) /* && !strcmp (ibuf.ent->model->name, "progs/player.mdl") */
+				textures[0] = playertextures[ibuf.ent - cl_entities - 1];
+
+		if (!gl_fullbrights.value)
+			textures[1] = blacktexture;
+
+		if (r_lightmap_cheatsafe)
+		{
+			textures[0] = greytexture;
+			textures[1] = blacktexture;
+		}
+
+		if (!textures[1])
+			textures[1] = blacktexture;
+
+		if (showtris)
+		{
+			textures[0] = blacktexture;
+			textures[1] = whitetexture;
+		}
+
+		GL_BindTextures (0, 2, textures);
+
+		GL_DrawElementsInstancedFunc (GL_TRIANGLES, hdr->numindexes, GL_UNSIGNED_SHORT, (void *)hdr->eboofs, ibuf.count);
+
+		rs_aliaspasses += hdr->numtris * ibuf.count;
+	}
+
 	ibuf.count = 0;
 
 	GL_EndGroup();
+}
+
+/*
+=================
+R_Alias_CanAddToBatch
+=================
+*/
+static qboolean R_Alias_CanAddToBatch (const entity_t *e)
+{
+	// empty batch
+	if (!ibuf.count)
+		return true;
+
+	// full batch
+	if (ibuf.count == countof (ibuf.inst))
+		return false;
+
+	// different models/skins
+	if (ibuf.ent->model != e->model || ibuf.ent->skinnum != e->skinnum)
+		return false;
+
+	// players have custom colors
+	if (!gl_nocolors.value && CL_IsPlayerEnt (ibuf.ent))
+		return false;
+
+	return true;
 }
 
 /*
@@ -409,8 +473,6 @@ R_DrawAliasModel_Real
 static void R_DrawAliasModel_Real (entity_t *e, qboolean showtris)
 {
 	aliashdr_t	*paliashdr;
-	int			anim, skinnum;
-	gltexture_t	*tx, *fb;
 	lerpdata_t	lerpdata;
 	float		fovscale = 1.0f;
 	float		model_matrix[16];
@@ -474,67 +536,20 @@ static void R_DrawAliasModel_Real (entity_t *e, qboolean showtris)
 	R_SetupAliasLighting (e);
 
 	//
-	// set up textures
-	//
-	anim = (int)(cl.time*10) & 3;
-	skinnum = e->skinnum;
-	if ((skinnum >= paliashdr->numskins) || (skinnum < 0))
-	{
-		Con_DPrintf ("R_DrawAliasModel: no such skin # %d for '%s'\n", skinnum, e->model->name);
-		// ericw -- display skin 0 for winquake compatibility
-		skinnum = 0;
-	}
-	tx = paliashdr->gltextures[skinnum][anim];
-	fb = paliashdr->fbtextures[skinnum][anim];
-	if (e->colormap != vid.colormap && !gl_nocolors.value)
-	{
-		if ((uintptr_t)e >= (uintptr_t)&cl_entities[1] && (uintptr_t)e <= (uintptr_t)&cl_entities[cl.maxclients]) /* && !strcmp (currententity->model->name, "progs/player.mdl") */
-			tx = playertextures[e - cl_entities - 1];
-	}
-	if (!gl_fullbrights.value)
-		fb = blacktexture;
-
-	//
 	// draw it
 	//
 
-	if (r_fullbright_cheatsafe)
+	if (r_fullbright_cheatsafe || showtris)
 		lightcolor[0] = lightcolor[1] = lightcolor[2] = 0.5f;
-
-	if (r_lightmap_cheatsafe)
-	{
-		tx = greytexture;
-		fb = blacktexture;
-	}
-
-	if (!fb)
-		fb = blacktexture;
 
 	if (showtris)
-	{
-		tx = blacktexture;
-		fb = whitetexture;
-		lightcolor[0] = lightcolor[1] = lightcolor[2] = 0.5f;
 		entalpha = 1.f;
-	}
 
-	if (ibuf.count)
-	{
-		if (ibuf.count == countof(ibuf.inst) ||
-			ibuf.ent->model != e->model ||
-			ibuf.textures[0] != tx ||
-			ibuf.textures[1] != fb)
-		{
-			R_FlushAliasInstances ();
-		}
-	}
+	if (!R_Alias_CanAddToBatch (e))
+		R_FlushAliasInstances (showtris);
 
 	if (!ibuf.count)
-	{
-		ibuf.ent         = e;
-		ibuf.textures[0] = tx;
-		ibuf.textures[1] = fb;
-	}
+		ibuf.ent = e;
 
 	instance = &ibuf.inst[ibuf.count++];
 
@@ -570,7 +585,7 @@ void R_DrawAliasModels (entity_t **ents, int count)
 	int i;
 	for (i = 0; i < count; i++)
 		R_DrawAliasModel_Real (ents[i], false);
-	R_FlushAliasInstances ();
+	R_FlushAliasInstances (false);
 }
 
 /*
@@ -583,5 +598,5 @@ void R_DrawAliasModels_ShowTris (entity_t **ents, int count)
 	int i;
 	for (i = 0; i < count; i++)
 		R_DrawAliasModel_Real (ents[i], true);
-	R_FlushAliasInstances ();
+	R_FlushAliasInstances (true);
 }

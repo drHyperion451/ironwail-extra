@@ -137,6 +137,8 @@ typedef struct glvert_s {
 typedef struct msurface_s
 {
 	mplane_t	*plane;
+	float		mins[3];		// johnfitz -- for frustum culling
+	float		maxs[3];		// johnfitz -- for frustum culling
 	int			flags;
 
 	int			vbo_firstvert;		// index of this surface's first vert in the VBO
@@ -249,8 +251,6 @@ typedef struct
 	int					maxwidth;
 	int					maxheight;
 	int					numframes;
-	float				beamlength;		// remove?
-	void				*cachespot;		// remove?
 	mspriteframedesc_t	frames[1];
 } msprite_t;
 
@@ -294,27 +294,6 @@ typedef struct
 	int					frame;
 	char				name[16];
 } maliasframedesc_t;
-
-typedef struct
-{
-	trivertx_t			bboxmin;
-	trivertx_t			bboxmax;
-	int					frame;
-} maliasgroupframedesc_t;
-
-typedef struct
-{
-	int						numframes;
-	int						intervals;
-	maliasgroupframedesc_t	frames[1];
-} maliasgroup_t;
-
-// !!! if this is changed, it must be changed in asm_draw.h too !!!
-typedef struct mtriangle_s {
-	int					facesfront;
-	int					vertindex[3];
-} mtriangle_t;
-
 
 #define	MAX_SKINS	32
 typedef struct {
@@ -384,13 +363,14 @@ typedef struct
 	bonepose_t inverse;
 } boneinfo_t;
 
-#define	MAXALIASVERTS	2000 //johnfitz -- was 1024
-#define	MAXALIASFRAMES	1024 //spike -- was 256
-#define	MAXALIASTRIS	4096 //ericw -- was 2048
-extern	aliashdr_t	*pheader;
-extern	stvert_t	stverts[MAXALIASVERTS];
-extern	mtriangle_t	triangles[MAXALIASTRIS];
-extern	trivertx_t	*poseverts[MAXALIASFRAMES];
+#define	MAXALIASVERTS		0x7fff //16-bit index buffer + onseam duplication
+#define	MAXALIASVERTS_QS	2000 //johnfitz -- was 1024
+#define	MAXALIASFRAMES		1024 //spike -- was 256
+#define	MAXALIASTRIS_QS		4096 //ericw -- was 2048
+extern	aliashdr_t			*pheader;
+extern	const stvert_t		*stverts;
+extern	const dtriangle_t	*triangles;
+extern	trivertx_t			*poseverts[MAXALIASFRAMES];
 
 //===================================================================
 

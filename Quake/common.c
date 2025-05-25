@@ -191,7 +191,7 @@ void Vec_Append (void **pvec, size_t element_size, const void *data, size_t coun
 	if (!count)
 		return;
 	Vec_Grow (pvec, element_size, count);
-	memcpy ((byte *)*pvec + VEC_HEADER(*pvec).size, data, count * element_size);
+	memcpy ((byte *)*pvec + VEC_HEADER(*pvec).size * element_size, data, count * element_size);
 	VEC_HEADER(*pvec).size += count;
 }
 
@@ -213,6 +213,12 @@ void Vec_Free (void **pvec)
 void MultiString_Append (char **pvec, const char *str)
 {
 	Vec_Append ((void **)pvec, 1, str, strlen (str) + 1);
+}
+
+void MultiString_AppendN (char **pvec, const char *str, size_t len)
+{
+	Vec_Append ((void **)pvec, 1, str, len);
+	VEC_PUSH (*pvec, '\0');
 }
 
 /*
@@ -666,7 +672,6 @@ float Q_atof (const char *str)
 
 	return val*sign;
 }
-
 
 /*
 ==============================================================================
@@ -1407,6 +1412,32 @@ Return NULL in case of overflow
 const char *COM_Parse (const char *data)
 {
 	return COM_ParseEx (data, CPE_NOTRUNC);
+}
+
+
+/*
+================
+COM_ParseLine
+================
+*/
+qboolean COM_ParseLine (const char **str, stringview_t *line)
+{
+	const char *p;
+
+	if (!str || !*str)
+		return false;
+
+	p = *str;
+	if (line)
+		line->data = p;
+	while (*p && *p != '\n')
+		p++;
+	if (line)
+		line->len = p - line->data;
+
+	*str = (*p == '\n') ? p + 1 : NULL;
+
+	return true;
 }
 
 
@@ -3005,12 +3036,10 @@ static void COM_InitBaseDir (void)
 	if (egs)
 		goto try_egs;
 
+	// try current working directory, then its ancestors (in case the executable is in its own subdirectory)
 	if (COM_SetBaseDir (host_parms->basedir))
 		return;
-
-	// executable might be in its own subdirectory, try going up one level
-	q_snprintf (path, sizeof (path), "%s/..", host_parms->basedir);
-	if (COM_SetBaseDir (path))
+	if (COM_SetBaseDirRec (host_parms->basedir))
 		return;
 
 	// on Linux, game data might actually be in the user dir

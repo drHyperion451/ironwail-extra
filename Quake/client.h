@@ -360,6 +360,8 @@ void CL_AdjustAngles (void);
 void CL_BaseMove (usercmd_t *cmd);
 qboolean CL_InCutscene (void);
 
+qboolean CL_IsPlayerEnt (const entity_t *ent);
+
 void CL_ParseTEnt (void);
 void CL_UpdateTEnts (void);
 

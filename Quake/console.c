@@ -1737,32 +1737,6 @@ static qboolean CompleteFileListSingle (const char *partial, void *param)
 	return true;
 }
 
-static qboolean CompleteClassnames (const char *partial, void *unused)
-{
-	extern edict_t *sv_player;
-	qcvm_t	*oldvm;
-	edict_t	*ed;
-	int		i;
-
-	if (!sv.active)
-		return true;
-	PR_PushQCVM (&sv.qcvm, &oldvm);
-
-	for (i = 1, ed = NEXT_EDICT (qcvm->edicts); i < qcvm->num_edicts; i++, ed = NEXT_EDICT (ed))
-	{
-		const char *name;
-		if (ed == sv_player || ed->free || !ed->v.classname)
-			continue;
-		name = PR_GetString (ed->v.classname);
-		if (*name)
-			Con_AddToTabList (name, partial, "#");
-	}
-
-	PR_PopQCVM (oldvm);
-
-	return true;
-}
-
 static qboolean CompleteBindKeys (const char *partial, void *unused)
 {
 	int i;
@@ -1820,7 +1794,6 @@ static const arg_completion_type_t arg_completion_types[] =
 	{ "load",					CompleteFileListSingle,	&savelist },
 	{ "save",					CompleteFileListSingle,	&savelist },
 	{ "sky",					CompleteFileListSingle,	&skylist },
-	{ "r_showbboxes_filter",	CompleteClassnames,		NULL },
 	{ "bind",					CompleteBindKeys,		NULL },
 	{ "unbind",					CompleteUnbindKeys,		NULL },
 };

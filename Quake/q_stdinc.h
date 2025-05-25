@@ -184,9 +184,9 @@ typedef struct { float data[4]; } float4_t;
 #if defined(MAXPATHLEN)
 #define PATH_MAX	MAXPATHLEN
 #elif defined(_WIN32) && defined(_MAX_PATH)
-#define PATH_MAX	_MAX_PATH
+#define PATH_MAX	(_MAX_PATH * 3)
 #elif defined(_WIN32) && defined(MAX_PATH)
-#define PATH_MAX	MAX_PATH
+#define PATH_MAX	(MAX_PATH * 3)
 #else /* fallback */
 #define PATH_MAX	1024
 #endif

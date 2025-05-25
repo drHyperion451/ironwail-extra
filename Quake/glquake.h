@@ -39,6 +39,8 @@ extern	int glx, gly, glwidth, glheight;
 
 #define BACKFACE_EPSILON	0.01
 
+extern vec3_t *r_pointfile;
+
 void R_TimeRefresh_f (void);
 void R_ReadPointFile_f (void);
 texture_t *R_TextureAnimation (texture_t *base, int frame);
@@ -477,12 +479,10 @@ typedef struct bmodel_draw_indirect_s {
 	GLuint		baseInstance;
 } bmodel_draw_indirect_t;
 
-typedef struct bmodel_gpu_leaf_s {
-	vec3_t		mins;
-	GLuint		firstsurf;
-	vec3_t		maxs;
-	GLuint		surfcountsky; // bit 0=sky; bits 1..31=surfcount
-} bmodel_gpu_leaf_t;
+typedef struct bmodel_gpu_marksurf_s {
+	GLuint		packedleafsky; // bit 0=sky; bits 1..31=leafindex
+	GLuint		surfindex;
+} bmodel_gpu_marksurf_t;
 
 typedef struct bmodel_gpu_surf_s {
 	vec4_t		plane;
@@ -490,6 +490,10 @@ typedef struct bmodel_gpu_surf_s {
 	GLuint		texnum;
 	GLuint		numedges;
 	GLuint		firstvert;
+	vec3_t		mins;
+	GLuint		padding0;
+	vec3_t		maxs;
+	GLuint		padding1;
 } bmodel_gpu_surf_t;
 
 void GL_BuildLightmaps (void);

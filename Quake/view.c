@@ -60,11 +60,11 @@ cvar_t	v_idlescale = {"v_idlescale", "0", CVAR_NONE};
 cvar_t	crosshair = {"crosshair", "0", CVAR_ARCHIVE};
 char	crosshair_char = '\0';
 
-cvar_t	gl_cshiftpercent = {"gl_cshiftpercent", "100", CVAR_NONE};
-cvar_t	gl_cshiftpercent_contents = {"gl_cshiftpercent_contents", "100", CVAR_NONE}; // QuakeSpasm
-cvar_t	gl_cshiftpercent_damage = {"gl_cshiftpercent_damage", "100", CVAR_NONE}; // QuakeSpasm
-cvar_t	gl_cshiftpercent_bonus = {"gl_cshiftpercent_bonus", "100", CVAR_NONE}; // QuakeSpasm
-cvar_t	gl_cshiftpercent_powerup = {"gl_cshiftpercent_powerup", "100", CVAR_NONE}; // QuakeSpasm
+cvar_t	gl_cshiftpercent = {"gl_cshiftpercent", "100", CVAR_ARCHIVE};
+cvar_t	gl_cshiftpercent_contents = {"gl_cshiftpercent_contents", "100", CVAR_ARCHIVE}; // QuakeSpasm
+cvar_t	gl_cshiftpercent_damage = {"gl_cshiftpercent_damage", "100", CVAR_ARCHIVE}; // QuakeSpasm
+cvar_t	gl_cshiftpercent_bonus = {"gl_cshiftpercent_bonus", "100", CVAR_ARCHIVE}; // QuakeSpasm
+cvar_t	gl_cshiftpercent_powerup = {"gl_cshiftpercent_powerup", "100", CVAR_ARCHIVE}; // QuakeSpasm
 
 cvar_t	r_viewmodel_quake = {"r_viewmodel_quake", "0", CVAR_ARCHIVE};
 
@@ -448,14 +448,16 @@ V_CalcBlend
 */
 void V_CalcBlend (void)
 {
-	float	r, g, b, a, a2;
-	int		j;
-	cvar_t	*cshiftpercent_cvars[NUM_CSHIFTS] = {
+	static const cvar_t	* const cshiftpercent_cvars[NUM_CSHIFTS] =
+	{
 		&gl_cshiftpercent_contents,
 		&gl_cshiftpercent_damage,
 		&gl_cshiftpercent_bonus,
 		&gl_cshiftpercent_powerup
 	};
+
+	float	r, g, b, a, a2;
+	int		j;
 
 	r = 0;
 	g = 0;

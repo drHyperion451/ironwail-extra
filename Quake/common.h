@@ -173,6 +173,7 @@ void Vec_Clear (void **pvec);
 void Vec_Free (void **pvec);
 
 void MultiString_Append (char **pvec, const char *str);
+void MultiString_AppendN (char **pvec, const char *str, size_t len);
 
 //============================================================================
 
@@ -293,6 +294,13 @@ typedef enum
 const char *COM_Parse (const char *data);
 const char *COM_ParseEx (const char *data, cpe_mode mode);
 
+typedef struct
+{
+	const char	*data;
+	size_t		len;
+} stringview_t;
+
+qboolean COM_ParseLine (const char **str, stringview_t *line);
 
 extern	int			com_argc;
 extern	const char	**com_argv;

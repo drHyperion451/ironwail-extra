@@ -111,7 +111,8 @@ byte *Image_LoadImage (const char *name, int *width, int *height, enum srcformat
 
 	for (i = 0; stbi_formats[i]; i++)
 	{
-		q_snprintf (loadfilename, sizeof(loadfilename), "%s.%s", name, stbi_formats[i]);
+		const char *ext = stbi_formats[i];
+		q_snprintf (loadfilename, sizeof(loadfilename), "%s.%s", name, ext);
 		COM_FOpenFile (loadfilename, &f, NULL);
 		if (f)
 		{
@@ -119,11 +120,13 @@ byte *Image_LoadImage (const char *name, int *width, int *height, enum srcformat
 			if (data)
 			{
 				int numbytes = (*width) * (*height) * 4;
-				byte *hunkdata = (byte *) Hunk_AllocName (numbytes, stbi_formats[i]);
+				byte *hunkdata = (byte *) Hunk_AllocNameNoFill (numbytes, ext);
 				memcpy (hunkdata, data, numbytes);
 				free (data);
 				data = hunkdata;
 				*fmt = SRC_RGBA;
+				if ((developer.value || map_checks.value) && strcmp (ext, "tga") != 0)
+					Con_Warning ("%s not supported by QS, consider tga\n", loadfilename);
 			}
 			else
 				Con_Warning ("couldn't load %s (%s)\n", loadfilename, stbi_failure_reason ());
@@ -269,7 +272,7 @@ static byte *Image_LoadPCX (FILE *f, int *width, int *height)
 	w = pcx.xmax - pcx.xmin + 1;
 	h = pcx.ymax - pcx.ymin + 1;
 
-	data = (byte *) Hunk_Alloc((w*h+1)*4); //+1 to allow reading padding byte on last line
+	data = (byte *) Hunk_AllocNoFill ((w*h+1)*4); //+1 to allow reading padding byte on last line
 
 	//load palette
 	fseek (f, start + com_filesize - 768, SEEK_SET);
@@ -357,7 +360,7 @@ static byte *Image_LoadLMP (FILE *f, int *width, int *height)
 	}
 
 	mark = Hunk_LowMark ();
-	data = (byte *) Hunk_Alloc (pix);
+	data = (byte *) Hunk_AllocNoFill (pix);
 	if (fread (data, 1, pix, f) != pix)
 	{
 		Hunk_FreeToLowMark (mark);

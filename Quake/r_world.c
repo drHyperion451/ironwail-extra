@@ -36,9 +36,9 @@ extern GLuint gl_bmodel_ibo;
 extern size_t gl_bmodel_ibo_size;
 extern GLuint gl_bmodel_indirect_buffer;
 extern size_t gl_bmodel_indirect_buffer_size;
-extern GLuint gl_bmodel_leaf_buffer;
 extern GLuint gl_bmodel_surf_buffer;
 extern GLuint gl_bmodel_marksurf_buffer;
+extern GLuint gl_bmodel_marksurf_buffer_size;
 
 typedef struct gpumark_frame_s {
 	vec4_t		frustum[4];
@@ -61,6 +61,7 @@ static void R_MarkVisSurfaces (byte* vis)
 	GLuint		buf;
 	GLbyte*		ofs;
 	size_t		vissize = (cl.worldmodel->numleafs + 7) >> 3;
+	size_t		nummark = gl_bmodel_marksurf_buffer_size / sizeof (bmodel_gpu_marksurf_t);
 	gpumark_frame_t frame;
 
 	GL_BeginGroup ("Mark surfaces");
@@ -91,13 +92,12 @@ static void R_MarkVisSurfaces (byte* vis)
 	GL_BindBufferRange (GL_SHADER_STORAGE_BUFFER, 2, gl_bmodel_ibo, 0, gl_bmodel_ibo_size);
 	GL_Upload (GL_SHADER_STORAGE_BUFFER, vis, vissize, &buf, &ofs);
 	GL_BindBufferRange (GL_SHADER_STORAGE_BUFFER, 3, buf, (GLintptr)ofs, vissize);
-	GL_BindBufferRange (GL_SHADER_STORAGE_BUFFER, 4, gl_bmodel_leaf_buffer, 0, cl.worldmodel->numleafs * sizeof(bmodel_gpu_leaf_t));
-	GL_BindBufferRange (GL_SHADER_STORAGE_BUFFER, 5, gl_bmodel_marksurf_buffer, 0, cl.worldmodel->nummarksurfaces * sizeof(cl.worldmodel->marksurfaces[0]));
-	GL_BindBufferRange (GL_SHADER_STORAGE_BUFFER, 6, gl_bmodel_surf_buffer, 0, cl.worldmodel->numsurfaces * sizeof(bmodel_gpu_surf_t));
+	GL_BindBufferRange (GL_SHADER_STORAGE_BUFFER, 4, gl_bmodel_marksurf_buffer, 0, gl_bmodel_marksurf_buffer_size);
+	GL_BindBufferRange (GL_SHADER_STORAGE_BUFFER, 5, gl_bmodel_surf_buffer, 0, cl.worldmodel->numsurfaces * sizeof(bmodel_gpu_surf_t));
 	GL_Upload (GL_UNIFORM_BUFFER, &frame, sizeof(frame), &buf, &ofs);
 	GL_BindBufferRange (GL_UNIFORM_BUFFER, 1, buf, (GLintptr)ofs, sizeof(frame));
 
-	GL_DispatchComputeFunc ((cl.worldmodel->numleafs + 63) / 64, 1, 1);
+	GL_DispatchComputeFunc ((nummark + 63) / 64, 1, 1);
 	GL_MemoryBarrierFunc (GL_COMMAND_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT | GL_ELEMENT_ARRAY_BARRIER_BIT);
 
 	GL_EndGroup ();

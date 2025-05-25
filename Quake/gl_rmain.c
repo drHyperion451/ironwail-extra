@@ -27,6 +27,8 @@ qboolean	r_cache_thrash;		// compatability
 
 gpuframedata_t r_framedata;
 
+vec3_t		*r_pointfile;
+
 int			r_visframecount;	// bumped when going to a new PVS
 int			r_framecount;		// used for dlight push checking
 
@@ -104,6 +106,7 @@ cvar_t	r_showbboxes_health = {"r_showbboxes_health", "0", CVAR_NONE}; // 0=show 
 cvar_t	r_showbboxes_links = {"r_showbboxes_links", "3", CVAR_NONE}; // 0=off; 1=outgoing only; 2=incoming only; 3=incoming+outgoing
 cvar_t	r_showbboxes_targets = {"r_showbboxes_targets", "1", CVAR_NONE};
 cvar_t	r_showfields = {"r_showfields", "0", CVAR_NONE};
+cvar_t	r_showfields_align = {"r_showfields_align", "1", CVAR_ARCHIVE}; // 0=entity pos; 1=bottom-right
 cvar_t	r_lerpmodels = {"r_lerpmodels", "1", CVAR_ARCHIVE};
 cvar_t	r_lerpmove = {"r_lerpmove", "1", CVAR_ARCHIVE};
 cvar_t	r_nolerp_list = {"r_nolerp_list", "progs/flame.mdl,progs/flame2.mdl,progs/braztall.mdl,progs/brazshrt.mdl,progs/longtrch.mdl,progs/flame_pyre.mdl,progs/v_saw.mdl,progs/v_xfist.mdl,progs/h2stuff/newfire.mdl", CVAR_NONE};
@@ -1164,7 +1167,8 @@ void R_DrawViewModel (void)
 	GL_EndGroup ();
 }
 
-typedef struct debugvert_s {
+typedef struct debugvert_s
+{
 	vec3_t		pos;
 	uint32_t	color;
 } debugvert_t;
@@ -1173,6 +1177,7 @@ static debugvert_t	debugverts[4096];
 static uint16_t		debugidx[8192];
 static int			numdebugverts = 0;
 static int			numdebugidx = 0;
+static qboolean		debugztest = false;
 
 /*
 ================
@@ -1185,9 +1190,13 @@ static void R_FlushDebugGeometry (void)
 	{
 		GLuint	buf;
 		GLbyte	*ofs;
+		unsigned int state;
 
 		GL_UseProgram (glprogs.debug3d);
-		GL_SetState (GLS_BLEND_ALPHA | GLS_NO_ZTEST | GLS_NO_ZWRITE | GLS_CULL_NONE | GLS_ATTRIBS(2));
+		state = GLS_BLEND_ALPHA | GLS_NO_ZWRITE | GLS_CULL_NONE | GLS_ATTRIBS(2);
+		if (!debugztest)
+			state |= GLS_NO_ZTEST;
+		GL_SetState (state);
 
 		GL_Upload (GL_ARRAY_BUFFER, debugverts, sizeof (debugverts[0]) * numdebugverts, &buf, &ofs);
 		GL_BindBuffer (GL_ARRAY_BUFFER, buf);
@@ -1201,6 +1210,19 @@ static void R_FlushDebugGeometry (void)
 
 	numdebugverts = 0;
 	numdebugidx = 0;
+}
+
+/*
+================
+R_SetDebugGeometryZTest
+================
+*/
+static void R_SetDebugGeometryZTest (qboolean ztest)
+{
+	if (debugztest == ztest)
+		return;
+	R_FlushDebugGeometry ();
+	debugztest = ztest;
 }
 
 /*
@@ -1363,31 +1385,50 @@ static void R_EmitEdictLink (const edict_t *from, const edict_t *to, showbboxfla
 ================
 R_ShowBoundingBoxesFilter
 
-r_showbboxes_filter artifact =trigger_secret
+r_showbboxes_filter artifact =trigger_secret #42
 ================
 */
 char r_showbboxes_filter_strings[MAXCMDLINE];
+qboolean r_showbboxes_filter_byindex;
 
 static qboolean R_ShowBoundingBoxesFilter (edict_t *ed)
 {
+	char entnum[16] = "";
+	const char *classname = NULL;
+	const char *filter_p = r_showbboxes_filter_strings;
+
 	if (!r_showbboxes_filter_strings[0])
 		return true;
 
+	if (r_showbboxes_filter_byindex)
+		q_snprintf (entnum, sizeof (entnum), "%d", NUM_FOR_EDICT (ed));
+
 	if (ed->v.classname)
+		classname = PR_GetString (ed->v.classname);
+
+	for (filter_p = r_showbboxes_filter_strings; *filter_p; filter_p += strlen (filter_p) + 1)
 	{
-		const char *classname = PR_GetString (ed->v.classname);
-		const char *str = r_showbboxes_filter_strings;
-		qboolean is_allowed = false;
-		while (*str && !is_allowed)
+		if (*filter_p == '#')
 		{
-			if (*str == '=')
-				is_allowed = !strcmp (classname, str + 1);
-			else
-				is_allowed = strstr (classname, str) != NULL;
-			str += strlen (str) + 1;
+			if (!strcmp (entnum, filter_p + 1))
+				return true;
+			continue;
 		}
-		return is_allowed;
+
+		if (!classname)
+			continue;
+
+		if (*filter_p == '=')
+		{
+			if (!strcmp (classname, filter_p + 1))
+				return true;
+			continue;
+		}
+
+		if (strstr (classname, filter_p) != NULL)
+			return true;
 	}
+
 	return false;
 }
 
@@ -1455,6 +1496,8 @@ static void R_ShowBoundingBoxes (void)
 
 	GL_BeginGroup ("Show bounding boxes");
 
+	R_SetDebugGeometryZTest (false);
+
 	oldvm = qcvm;
 	PR_SwitchQCVM(NULL);
 	PR_SwitchQCVM(&sv.qcvm);
@@ -1498,7 +1541,7 @@ static void R_ShowBoundingBoxes (void)
 		if (R_CullBox (mins, maxs))
 			continue;
 
-		// Classname filter
+		// Classname or edict num filter
 		if (!R_ShowBoundingBoxesFilter(ed))
 			continue;
 
@@ -1649,6 +1692,87 @@ static void R_ShowBoundingBoxes (void)
 }
 
 /*
+===============
+R_ShowPointFile
+===============
+*/
+static void R_ShowPointFile (void)
+{
+	size_t i;
+
+	if (VEC_SIZE (r_pointfile) == 0)
+		return;
+
+	GL_BeginGroup ("Point file");
+	R_SetDebugGeometryZTest (true);
+	for (i = 1; i < VEC_SIZE (r_pointfile); i++)
+		R_EmitArrow (r_pointfile[i - 1], r_pointfile[i], 0xff3f3f7f);
+	R_FlushDebugGeometry ();
+	GL_EndGroup ();
+}
+
+/*
+===============
+Collinear
+===============
+*/
+static qboolean Collinear (const vec3_t a, const vec3_t b, const vec3_t c)
+{
+	return Distance (a, b) + Distance (b, c) < Distance (a, c) * 1.00001f;
+}
+
+/*
+===============
+R_ReadPointFile_f
+===============
+*/
+void R_ReadPointFile_f (void)
+{
+	FILE		*f;
+	vec3_t		org;
+	int			r, n;
+	qboolean	leakmode;
+	char		name[MAX_QPATH];
+
+	VEC_CLEAR (r_pointfile);
+
+	if (cls.state != ca_connected)
+		return;			// need an active map.
+
+	q_snprintf (name, sizeof(name), "maps/%s.pts", cl.mapname);
+	leakmode = Cmd_Argc () >= 2 && !strcmp (Cmd_Argv (1), "leak");
+
+	COM_FOpenFile (name, &f, NULL);
+	if (!f)
+	{
+		Con_Printf ("couldn't open %s\n", name);
+		return;
+	}
+
+	if (!leakmode)
+		Con_Printf ("Reading %s...\n", name);
+	org[0] = org[1] = org[2] = 0; // silence pesky compiler warnings
+
+	for (r = 0; fscanf (f,"%f %f %f\n", &org[0], &org[1], &org[2]) == 3; r++)
+	{
+		Vec_Append ((void **) &r_pointfile, sizeof (r_pointfile[0]), &org, 1);
+		n = (int) VEC_SIZE (r_pointfile);
+		if (n >= 3 && Collinear (r_pointfile[n-3], r_pointfile[n-2], r_pointfile[n-1]))
+		{
+			VectorCopy (r_pointfile[n-1], r_pointfile[n-2]);
+			VEC_POP (r_pointfile);
+		}
+	}
+
+	fclose (f);
+
+	if (leakmode)
+		Con_Warning ("map appears to have leaks!\n");
+	else
+		Con_Printf ("%i points read (%i significant)\n", r, (int) VEC_SIZE (r_pointfile));
+}
+
+/*
 ================
 R_ShowTris -- johnfitz
 ================
@@ -1795,6 +1919,8 @@ void R_RenderScene (void)
 	R_ShowTris (); //johnfitz
 
 	R_ShowBoundingBoxes (); //johnfitz
+
+	R_ShowPointFile ();
 }
 
 /*
