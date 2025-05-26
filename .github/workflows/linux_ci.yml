@@ -14,3 +14,18 @@ jobs:
       run: sudo apt update && sudo apt install libcurl4-openssl-dev libmpg123-dev libsdl2-dev libvorbis-dev
     - name: Build
       run: make --jobs=3 --keep-going --directory=Quake CC=${{ matrix.compiler }}
+
+    - name: Prepare artifact
+      if: github.ref == 'refs/heads/master_experimental_artifacts' && github.event_name != 'pull_request'
+      run: |
+        mkdir -p artifact
+        cp Quake/quake_binary_file artifact/
+        cp Quake/README.md artifact/
+        echo "Artifact Ready"
+
+    - name: Upload artifact
+      if: github.ref == 'refs/heads/master_experimental_artifacts' && github.event_name != 'pull_request'
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-${{ matrix.compiler }}-${{ github.ref_name }}
+        path: artifact/*
